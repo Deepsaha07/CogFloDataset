@@ -3,13 +3,7 @@ from firebase_admin import credentials, firestore
 import streamlit as st
 
 
-SERVICE_ACCOUNT_PATH = "/Users/deeps/Documents/QIMRB/CSV_Export/cogflo-dev-firebase-adminsdk-fbsvc-727afa757c.json"
 
-ROOT_COLLECTION = "users"
-MILESTONES_COLLECTION = "milestones"
-SCORE_COLLECTION = "score"
-SESSIONS_COLLECTION = "sessions"
-TASK_RUNS_COLLECTION = "task_run"
 
 
 
