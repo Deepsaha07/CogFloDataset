@@ -696,6 +696,16 @@ with tab_export:
             "JSON export level",
             ["Subject/User level", "Milestone level", "Session level"],
         )
+        
+        
+
+        st.download_button(
+            label="Download Raw JSON Export",
+            data=json_file,
+            file_name="firestore_export.json",
+            mime="application/json",
+            use_container_width=True,
+        )
 
         st.download_button(
             label="Download Excel Workbook",
