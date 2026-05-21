@@ -5,7 +5,7 @@ import plotly.express as px
 from services.firestore_service import fetch_firestore_data
 from utils.processing import rows_to_dataframes
 from utils.export_utils import create_excel_bytes
-
+from utils.export_utils import create_excel_bytes, create_json_bytes
 
 st.set_page_config(
     page_title="Firestore Dashboard",
@@ -690,6 +690,11 @@ with tab_export:
             export_sessions,
             export_task_runs,
             export_task_trials,
+        )
+        
+        json_scope_level = st.selectbox(
+            "JSON export level",
+            ["Subject/User level", "Milestone level", "Session level"],
         )
 
         st.download_button(

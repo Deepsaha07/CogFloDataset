@@ -4,6 +4,16 @@ import streamlit as st
 
 
 
+ROOT_COLLECTION = "users"
+
+MILESTONES_COLLECTION = "milestones"
+
+SCORE_COLLECTION = "score"
+
+SESSIONS_COLLECTION = "sessions"
+
+TASK_RUNS_COLLECTION = "task_runs"
+
 
 
 
