@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.pyc
+exports/
+serviceAccountKey.json
+.streamlit/secrets.toml
+.DS_Store
