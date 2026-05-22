@@ -697,7 +697,14 @@ with tab_export:
             ["Subject/User level", "Milestone level", "Session level"],
         )
         
-        
+        json_file = create_json_bytes(
+            export_users,
+            export_milestones,
+            export_scores,
+            export_sessions,
+            export_task_runs,
+            json_scope_level
+            )
 
         st.download_button(
             label="Download Raw JSON Export",
