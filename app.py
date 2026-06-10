@@ -1,17 +1,24 @@
 import streamlit as st
 import pandas as pd
-import plotly.express as px
 
 from services.firestore_service import fetch_firestore_data
 from utils.processing import rows_to_dataframes
-
 from utils.export_utils import create_excel_bytes, create_json_bytes
+
+
+st.set_page_config(
+    page_title="CogFlo Analytics Dashboard",
+    page_icon="📊",
+    layout="wide",
+)
+
 
 APP_CONFIG_LABELS = {
     "app_config_quicktest": "Testing",
     "app_config_norm_study": "Norming",
     "app_config_default": "Public App",
 }
+
 
 def go_home():
     st.session_state["page"] = "home"
@@ -53,92 +60,7 @@ if "selected_user_id" not in st.session_state:
 
 if "previous_page" not in st.session_state:
     st.session_state["previous_page"] = "home"
-    
-params = st.query_params
 
-if "page" in params:
-    st.session_state["page"] = params["page"]
-
-if "user_id" in params:
-    st.session_state["selected_user_id"] = params["user_id"]
-
-if "app_config" in params:
-    st.session_state["selected_app_config"] = params["app_config"]
-
-def format_datetime_series(series):
-    return pd.to_datetime(series, errors="coerce").dt.strftime("%d %B, %Y, %I.%M.%S %p")
-
-def make_open_subject_link(user_id, selected_config=None):
-    if selected_config:
-        return f"?page=subject_view&user_id={user_id}&app_config={selected_config}"
-    return f"?page=subject_view&user_id={user_id}"
-
-def make_user_home_table(df, selected_config=None):
-    if df.empty:
-        return pd.DataFrame(
-            columns=["Name", "Email", "User ID", "Age", "Gender", "Last Used", "Open"]
-        )
-
-    out = pd.DataFrame()
-
-    out["Name"] = df.get("user.fullName", "")
-    out["Email"] = df.get("user.email", "")
-    out["User ID"] = df.get("user_id", "")
-
-    age_map = {
-        0: "<18",
-        1: ">18",
-        "0": "<18",
-        "1": ">18",
-    }
-
-    gender_map = {
-        1: "Male",
-        2: "Female",
-        "1": "Male",
-        "2": "Female",
-    }
-
-    out["Age"] = (
-        df.get("user.ageGroup", "").map(age_map)
-        if "user.ageGroup" in df.columns
-        else ""
-    )
-
-    out["Gender"] = (
-        df.get("user.sex", "").map(gender_map)
-        if "user.sex" in df.columns
-        else ""
-    )
-
-    if "user.updatedAt" in df.columns:
-        out["Last Used"] = format_datetime_series(df["user.updatedAt"])
-        out["_sort_time"] = pd.to_datetime(df["user.updatedAt"], errors="coerce")
-    else:
-        out["Last Used"] = ""
-        out["_sort_time"] = pd.NaT
-
-    out["Open"] = out["User ID"].apply(
-        lambda uid: make_open_subject_link(uid, selected_config)
-    )
-
-    return out
-
-
-def get_selected_config_users(df_users, selected_config):
-    if "user.appConfigId" not in df_users.columns:
-        return df_users.iloc[0:0]
-
-    return df_users[df_users["user.appConfigId"] == selected_config].copy()
-
-st.set_page_config(
-    page_title="Firestore Dashboard",
-    page_icon="📊",
-    layout="wide",
-)
-
-st.title("CogFlo Analytics Dashboard")
-st.caption("Users → Milestones → Scores → Sessions")
 
 def check_password():
     if "authenticated" not in st.session_state:
@@ -163,10 +85,85 @@ def check_password():
 if not check_password():
     st.stop()
 
+
+st.title("CogFlo Analytics Dashboard")
+st.caption("Users → Milestones → Scores → Sessions")
+
+
+def format_datetime_series(series):
+    return pd.to_datetime(series, errors="coerce").dt.strftime(
+        "%d %B, %Y, %I.%M.%S %p"
+    )
+
+
+def make_user_home_table(df):
+    if df.empty:
+        return pd.DataFrame(
+            columns=["Name", "Email", "User ID", "Age", "Gender", "Last Used"]
+        )
+
+    out = pd.DataFrame(index=df.index)
+
+    out["Name"] = df["user.fullName"] if "user.fullName" in df.columns else ""
+    out["Email"] = df["user.email"] if "user.email" in df.columns else ""
+    out["User ID"] = df["user_id"] if "user_id" in df.columns else ""
+
+    age_map = {
+        0: "<18",
+        1: ">18",
+        "0": "<18",
+        "1": ">18",
+    }
+
+    gender_map = {
+        1: "Male",
+        2: "Female",
+        "1": "Male",
+        "2": "Female",
+    }
+
+    out["Age"] = (
+        df["user.ageGroup"].map(age_map)
+        if "user.ageGroup" in df.columns
+        else ""
+    )
+
+    out["Gender"] = (
+        df["user.sex"].map(gender_map)
+        if "user.sex" in df.columns
+        else ""
+    )
+
+    if "user.updatedAt" in df.columns:
+        out["Last Used"] = format_datetime_series(df["user.updatedAt"])
+        out["_sort_time"] = pd.to_datetime(df["user.updatedAt"], errors="coerce")
+    else:
+        out["Last Used"] = ""
+        out["_sort_time"] = pd.NaT
+
+    return out
+
+
+def get_selected_config_users(df_users, selected_config):
+    if "user.appConfigId" not in df_users.columns:
+        return df_users.iloc[0:0]
+
+    return df_users[df_users["user.appConfigId"] == selected_config].copy()
+
+
 @st.cache_data(show_spinner=False)
 def load_data():
-    user_rows, milestone_rows, score_rows, session_rows, task_run_rows = fetch_firestore_data()
-    return rows_to_dataframes(user_rows, milestone_rows, score_rows, session_rows, task_run_rows)
+    user_rows, milestone_rows, score_rows, session_rows, task_run_rows = (
+        fetch_firestore_data()
+    )
+    return rows_to_dataframes(
+        user_rows,
+        milestone_rows,
+        score_rows,
+        session_rows,
+        task_run_rows,
+    )
+
 
 with st.sidebar:
     st.header("Controls")
@@ -177,17 +174,22 @@ with st.sidebar:
 
     st.divider()
 
+
 try:
     with st.spinner("Loading Firestore data..."):
-        df_users, df_milestones, df_scores, df_sessions, df_task_runs, df_task_trials = load_data()
+        (
+            df_users,
+            df_milestones,
+            df_scores,
+            df_sessions,
+            df_task_runs,
+            df_task_trials,
+        ) = load_data()
 except Exception as e:
     st.error(f"Failed to load Firestore data: {e}")
     st.stop()
 
 
-# ----------------------------
-# SIDEBAR SUMMARY ONLY
-# ----------------------------
 with st.sidebar:
     st.subheader("Dataset Summary")
     st.write(f"Users: {len(df_users)}")
@@ -240,7 +242,7 @@ if st.session_state["page"] == "home":
 # EXPORT PAGE
 # ----------------------------
 if st.session_state["page"] == "export":
-    top1, top2, top3 = st.columns([1, 1, 4])
+    top1, top2, _ = st.columns([1, 1, 4])
 
     with top1:
         if st.button("Home", use_container_width=True):
@@ -276,10 +278,12 @@ if st.session_state["page"] == "export":
         except Exception:
             updated_str = ""
 
-        default_user_options.append({
-            "label": f"{name} | {user_id} | {updated_str}",
-            "user_id": user_id,
-        })
+        default_user_options.append(
+            {
+                "label": f"{name} | {user_id} | {updated_str}",
+                "user_id": user_id,
+            }
+        )
 
     all_labels = [u["label"] for u in default_user_options]
 
@@ -311,11 +315,19 @@ if st.session_state["page"] == "export":
     )
 
     export_users = df_users[df_users["user_id"].isin(selected_export_user_ids)]
-    export_milestones = df_milestones[df_milestones["user_id"].isin(selected_export_user_ids)]
+    export_milestones = df_milestones[
+        df_milestones["user_id"].isin(selected_export_user_ids)
+    ]
     export_scores = df_scores[df_scores["user_id"].isin(selected_export_user_ids)]
-    export_sessions = df_sessions[df_sessions["user_id"].isin(selected_export_user_ids)]
-    export_task_runs = df_task_runs[df_task_runs["user_id"].isin(selected_export_user_ids)]
-    export_task_trials = df_task_trials[df_task_trials["user_id"].isin(selected_export_user_ids)]
+    export_sessions = df_sessions[
+        df_sessions["user_id"].isin(selected_export_user_ids)
+    ]
+    export_task_runs = df_task_runs[
+        df_task_runs["user_id"].isin(selected_export_user_ids)
+    ]
+    export_task_trials = df_task_trials[
+        df_task_trials["user_id"].isin(selected_export_user_ids)
+    ]
 
     if export_level == "Milestone level":
         valid_users = export_milestones["user_id"].unique().tolist()
@@ -400,7 +412,7 @@ if st.session_state["page"] == "subject_view":
     subject_task_runs = df_task_runs[df_task_runs["user_id"] == selected_user_id]
     subject_task_trials = df_task_trials[df_task_trials["user_id"] == selected_user_id]
 
-    top1, top2, top3 = st.columns([1, 1, 4])
+    top1, top2, _ = st.columns([1, 1, 4])
 
     with top1:
         if st.button("Home", use_container_width=True):
@@ -441,8 +453,11 @@ if st.session_state["page"] == "subject_view":
         st.subheader("Subject Summary")
 
         st.dataframe(
-            make_user_home_table(subject_users).drop(columns=["_sort_time"], errors="ignore"),
+            make_user_home_table(subject_users).drop(
+                columns=["_sort_time"], errors="ignore"
+            ),
             use_container_width=True,
+            hide_index=True,
         )
 
         if not subject_scores.empty:
@@ -452,12 +467,23 @@ if st.session_state["page"] == "subject_view":
         if not subject_task_runs.empty:
             st.markdown("### Task Run Summary")
             compact_task_cols = [
-                col for col in subject_task_runs.columns
+                col
+                for col in subject_task_runs.columns
                 if col in ["user_id", "milestone_id", "session_id", "task_id"]
                 or col.startswith("task.result.summary")
-                or col in ["task.status", "task.result.run.durationMs", "task.result.run.taskId"]
+                or col
+                in [
+                    "task.status",
+                    "task.result.run.durationMs",
+                    "task.result.run.taskId",
+                ]
             ]
-            st.dataframe(subject_task_runs[compact_task_cols], use_container_width=True)
+
+            st.dataframe(
+                subject_task_runs[compact_task_cols],
+                use_container_width=True,
+                height=350,
+            )
 
     with subject_tab2:
         if subject_milestones.empty:
@@ -478,7 +504,10 @@ if st.session_state["page"] == "subject_view":
                     f"Milestone: {milestone_id} | Sessions: {len(milestone_sessions)}"
                 ):
                     st.write("Milestone Details")
-                    st.dataframe(pd.DataFrame([milestone_row]), use_container_width=True)
+                    st.dataframe(
+                        pd.DataFrame([milestone_row]),
+                        use_container_width=True,
+                    )
 
                     st.write("Score")
                     st.dataframe(milestone_scores, use_container_width=True)
@@ -494,7 +523,10 @@ if st.session_state["page"] == "subject_view":
                         with st.expander(
                             f"Session: {session_id} | Task Runs: {len(session_tasks)}"
                         ):
-                            st.dataframe(pd.DataFrame([session_row]), use_container_width=True)
+                            st.dataframe(
+                                pd.DataFrame([session_row]),
+                                use_container_width=True,
+                            )
                             st.dataframe(session_tasks, use_container_width=True)
 
     with subject_tab3:
@@ -512,9 +544,6 @@ if st.session_state["page"] == "subject_view":
 # ----------------------------
 # DATASET VIEW PAGE
 # ----------------------------
-# ----------------------------
-# DATASET VIEW PAGE
-# ----------------------------
 if st.session_state["page"] == "dataset_view":
     selected_config = st.session_state["selected_app_config"]
 
@@ -524,7 +553,7 @@ if st.session_state["page"] == "dataset_view":
 
     selected_config_label = APP_CONFIG_LABELS.get(selected_config, selected_config)
 
-    top1, top2, top3 = st.columns([1, 1, 4])
+    top1, top2, _ = st.columns([1, 1, 4])
 
     with top1:
         if st.button("Home", use_container_width=True):
@@ -554,7 +583,7 @@ if st.session_state["page"] == "dataset_view":
             label_visibility="collapsed",
         )
 
-    home_users_table = make_user_home_table(config_users, selected_config)
+    home_users_table = make_user_home_table(config_users)
 
     if "_sort_time" in home_users_table.columns:
         home_users_table = home_users_table.sort_values(
@@ -567,19 +596,22 @@ if st.session_state["page"] == "dataset_view":
     if config_users.empty:
         st.info("No users found in this dataset.")
     else:
-        st.dataframe(
+        user_table_event = st.dataframe(
             display_home_users,
             use_container_width=True,
             height=520,
             hide_index=True,
-            column_config={
-                "Open": st.column_config.LinkColumn(
-                    "Open",
-                    display_text="Open",
-                    help="Open subject dashboard",
-                )
-            },
+            on_select="rerun",
+            selection_mode="single-row",
         )
+
+        selected_rows = user_table_event.selection.rows
+
+        if selected_rows:
+            selected_row_index = selected_rows[0]
+            selected_user_id = display_home_users.iloc[selected_row_index]["User ID"]
+            open_subject(selected_user_id)
+            st.rerun()
 
     st.divider()
     st.subheader("Group Analysis")
@@ -624,19 +656,22 @@ if st.session_state["page"] == "dataset_view":
             errors="ignore",
         )
 
-        st.dataframe(
+        group_table_event = st.dataframe(
             group_users_display,
             use_container_width=True,
             height=400,
             hide_index=True,
-            column_config={
-                "Open": st.column_config.LinkColumn(
-                    "Open",
-                    display_text="Open",
-                    help="Open subject dashboard",
-                )
-            },
+            on_select="rerun",
+            selection_mode="single-row",
         )
+
+        group_selected_rows = group_table_event.selection.rows
+
+        if group_selected_rows:
+            selected_row_index = group_selected_rows[0]
+            selected_user_id = group_users_display.iloc[selected_row_index]["User ID"]
+            open_subject(selected_user_id)
+            st.rerun()
 
     with group_tab2:
         st.dataframe(group_scores, use_container_width=True, height=400)
