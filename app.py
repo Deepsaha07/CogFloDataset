@@ -528,35 +528,43 @@ if st.session_state["page"] == "dataset_view":
 
     display_home_users = home_users_table.drop(columns=["_sort_time"], errors="ignore")
 
-    st.dataframe(
-        display_home_users,
+    st.markdown("### Users")
+
+if config_users.empty:
+    st.info("No users found in this dataset.")
+else:
+    users_for_display = display_home_users.copy()
+
+    users_for_display["Open"] = False
+
+    edited_users = st.data_editor(
+        users_for_display,
         use_container_width=True,
-        height=450,
+        height=520,
+        hide_index=True,
+        disabled=[
+            col for col in users_for_display.columns
+            if col != "Open"
+        ],
+        column_config={
+            "Open": st.column_config.CheckboxColumn(
+                "Open",
+                help="Select one subject to open dashboard",
+                default=False,
+            )
+        },
     )
 
-    st.divider()
-    st.subheader("Open Subject Dashboard")
+    selected_open_rows = edited_users[edited_users["Open"] == True]
 
-    if config_users.empty:
-        st.info("No users found in this dataset.")
-    else:
-        for _, row in config_users.iterrows():
-            name = row.get("user.fullName", "Unknown Name")
-            user_id = row.get("user_id", "")
-            email = row.get("user.email", "")
+    if len(selected_open_rows) > 1:
+        st.warning("Please select only one subject to open.")
+    elif len(selected_open_rows) == 1:
+        selected_user_id = selected_open_rows.iloc[0]["User ID"]
 
-            col1, col2, col3 = st.columns([3, 5, 2])
-
-            with col1:
-                st.write(name)
-
-            with col2:
-                st.caption(f"{email} | {user_id}")
-
-            with col3:
-                if st.button("Open", key=f"open_subject_{user_id}", use_container_width=True):
-                    open_subject(user_id)
-                    st.rerun()
+        if st.button("Open Selected Subject", use_container_width=True):
+            open_subject(selected_user_id)
+            st.rerun()
 
     st.divider()
     st.subheader("Group Analysis")
