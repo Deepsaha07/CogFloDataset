@@ -25,7 +25,10 @@ def go_export():
 
 
 def go_back():
-    st.session_state["page"] = st.session_state.get("previous_page", "home")
+    if st.session_state.get("selected_app_config"):
+        st.session_state["page"] = "dataset_view"
+    else:
+        st.session_state["page"] = st.session_state.get("previous_page", "home")
 
 
 def open_dataset(app_config_id):
@@ -50,14 +53,31 @@ if "selected_user_id" not in st.session_state:
 
 if "previous_page" not in st.session_state:
     st.session_state["previous_page"] = "home"
+    
+params = st.query_params
+
+if "page" in params:
+    st.session_state["page"] = params["page"]
+
+if "user_id" in params:
+    st.session_state["selected_user_id"] = params["user_id"]
+
+if "app_config" in params:
+    st.session_state["selected_app_config"] = params["app_config"]
 
 def format_datetime_series(series):
     return pd.to_datetime(series, errors="coerce").dt.strftime("%d %B, %Y, %I.%M.%S %p")
 
+def make_open_subject_link(user_id, selected_config=None):
+    if selected_config:
+        return f"?page=subject_view&user_id={user_id}&app_config={selected_config}"
+    return f"?page=subject_view&user_id={user_id}"
 
-def make_user_home_table(df):
+def make_user_home_table(df, selected_config=None):
     if df.empty:
-        return pd.DataFrame(columns=["Name", "Email", "User ID", "Age", "Gender", "Last Used"])
+        return pd.DataFrame(
+            columns=["Name", "Email", "User ID", "Age", "Gender", "Last Used", "Open"]
+        )
 
     out = pd.DataFrame()
 
@@ -79,8 +99,17 @@ def make_user_home_table(df):
         "2": "Female",
     }
 
-    out["Age"] = df.get("user.ageGroup", "").map(age_map) if "user.ageGroup" in df.columns else ""
-    out["Gender"] = df.get("user.sex", "").map(gender_map) if "user.sex" in df.columns else ""
+    out["Age"] = (
+        df.get("user.ageGroup", "").map(age_map)
+        if "user.ageGroup" in df.columns
+        else ""
+    )
+
+    out["Gender"] = (
+        df.get("user.sex", "").map(gender_map)
+        if "user.sex" in df.columns
+        else ""
+    )
 
     if "user.updatedAt" in df.columns:
         out["Last Used"] = format_datetime_series(df["user.updatedAt"])
@@ -88,6 +117,10 @@ def make_user_home_table(df):
     else:
         out["Last Used"] = ""
         out["_sort_time"] = pd.NaT
+
+    out["Open"] = out["User ID"].apply(
+        lambda uid: make_open_subject_link(uid, selected_config)
+    )
 
     return out
 
@@ -479,6 +512,9 @@ if st.session_state["page"] == "subject_view":
 # ----------------------------
 # DATASET VIEW PAGE
 # ----------------------------
+# ----------------------------
+# DATASET VIEW PAGE
+# ----------------------------
 if st.session_state["page"] == "dataset_view":
     selected_config = st.session_state["selected_app_config"]
 
@@ -518,7 +554,7 @@ if st.session_state["page"] == "dataset_view":
             label_visibility="collapsed",
         )
 
-    home_users_table = make_user_home_table(config_users)
+    home_users_table = make_user_home_table(config_users, selected_config)
 
     if "_sort_time" in home_users_table.columns:
         home_users_table = home_users_table.sort_values(
@@ -528,43 +564,22 @@ if st.session_state["page"] == "dataset_view":
 
     display_home_users = home_users_table.drop(columns=["_sort_time"], errors="ignore")
 
-    st.markdown("### Users")
-
-if config_users.empty:
-    st.info("No users found in this dataset.")
-else:
-    users_for_display = display_home_users.copy()
-
-    users_for_display["Open"] = False
-
-    edited_users = st.data_editor(
-        users_for_display,
-        use_container_width=True,
-        height=520,
-        hide_index=True,
-        disabled=[
-            col for col in users_for_display.columns
-            if col != "Open"
-        ],
-        column_config={
-            "Open": st.column_config.CheckboxColumn(
-                "Open",
-                help="Select one subject to open dashboard",
-                default=False,
-            )
-        },
-    )
-
-    selected_open_rows = edited_users[edited_users["Open"] == True]
-
-    if len(selected_open_rows) > 1:
-        st.warning("Please select only one subject to open.")
-    elif len(selected_open_rows) == 1:
-        selected_user_id = selected_open_rows.iloc[0]["User ID"]
-
-        if st.button("Open Selected Subject", use_container_width=True):
-            open_subject(selected_user_id)
-            st.rerun()
+    if config_users.empty:
+        st.info("No users found in this dataset.")
+    else:
+        st.dataframe(
+            display_home_users,
+            use_container_width=True,
+            height=520,
+            hide_index=True,
+            column_config={
+                "Open": st.column_config.LinkColumn(
+                    "Open",
+                    display_text="Open",
+                    help="Open subject dashboard",
+                )
+            },
+        )
 
     st.divider()
     st.subheader("Group Analysis")
@@ -576,9 +591,11 @@ else:
         format_func=lambda x: APP_CONFIG_LABELS.get(x, x),
     )
 
-    group_users = df_users[
-        df_users["user.appConfigId"].isin(group_config_options)
-    ] if "user.appConfigId" in df_users.columns else df_users.iloc[0:0]
+    group_users = (
+        df_users[df_users["user.appConfigId"].isin(group_config_options)]
+        if "user.appConfigId" in df_users.columns
+        else df_users.iloc[0:0]
+    )
 
     group_user_ids = group_users["user_id"].tolist()
 
@@ -606,7 +623,20 @@ else:
             columns=["_sort_time"],
             errors="ignore",
         )
-        st.dataframe(group_users_display, use_container_width=True, height=400)
+
+        st.dataframe(
+            group_users_display,
+            use_container_width=True,
+            height=400,
+            hide_index=True,
+            column_config={
+                "Open": st.column_config.LinkColumn(
+                    "Open",
+                    display_text="Open",
+                    help="Open subject dashboard",
+                )
+            },
+        )
 
     with group_tab2:
         st.dataframe(group_scores, use_container_width=True, height=400)
