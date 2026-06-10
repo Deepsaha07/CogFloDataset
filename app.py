@@ -135,6 +135,86 @@ with tab_overview:
 
     st.divider()
 
+    st.subheader("Users")
+
+    users_view = f_users.copy()
+
+    # Detect possible name/email/time columns naturally
+    possible_name_cols = [
+        col for col in users_view.columns
+        if "name" in col.lower()
+    ]
+
+    possible_email_cols = [
+        col for col in users_view.columns
+        if "email" in col.lower()
+    ]
+
+    possible_time_cols = [
+        col for col in users_view.columns
+        if any(key in col.lower() for key in ["created", "updated", "recorded", "computed", "timestamp", "time"])
+    ]
+
+    name_col = possible_name_cols[0] if possible_name_cols else None
+    email_col = possible_email_cols[0] if possible_email_cols else None
+
+    sort_col = None
+
+    sort_c1, sort_c2 = st.columns([2, 1])
+
+    with sort_c1:
+        if possible_time_cols:
+            sort_col = st.selectbox(
+                "Sort by time field",
+                options=possible_time_cols,
+            )
+        else:
+            st.info("No timestamp/time column detected for sorting.")
+
+    with sort_c2:
+        sort_order = st.radio(
+            "Order",
+            options=["Latest first", "Oldest first"],
+            horizontal=False,
+        )
+
+    if sort_col:
+        users_view["_sort_time"] = pd.to_datetime(
+            users_view[sort_col],
+            errors="coerce",
+        )
+
+        users_view = users_view.sort_values(
+            "_sort_time",
+            ascending=True if sort_order == "Oldest first" else False,
+        )
+
+        users_view = users_view.drop(columns=["_sort_time"])
+
+    # Reorder columns: user_id, name, email first
+    priority_cols = ["user_id"]
+
+    if name_col and name_col not in priority_cols:
+        priority_cols.append(name_col)
+
+    if email_col and email_col not in priority_cols:
+        priority_cols.append(email_col)
+
+    remaining_cols = [
+        col for col in users_view.columns
+        if col not in priority_cols
+    ]
+
+    users_view = users_view[priority_cols + remaining_cols]
+
+    st.dataframe(
+        users_view,
+        use_container_width=True,
+        height=500,
+    )
+
+    st.divider()
+
     st.subheader("Selected Data Preview")
 
     preview_tab1, preview_tab2, preview_tab3, preview_tab4, preview_tab5, preview_tab6 = st.tabs(
@@ -142,7 +222,7 @@ with tab_overview:
     )
 
     with preview_tab1:
-        st.dataframe(f_users, use_container_width=True, height=300)
+        st.dataframe(users_view, use_container_width=True, height=300)
 
     with preview_tab2:
         st.dataframe(f_milestones, use_container_width=True, height=300)
@@ -158,145 +238,6 @@ with tab_overview:
 
     with preview_tab6:
         st.dataframe(f_task_trials, use_container_width=True, height=300)
-
-with tab_tree:
-    st.subheader("Expandable User Tree")
-
-    if f_users.empty:
-        st.info("No users available.")
-    else:
-        for _, user_row in f_users.iterrows():
-            user_id = user_row["user_id"]
-
-            user_milestones = f_milestones[f_milestones["user_id"] == user_id]
-
-            with st.expander(f"User: {user_id} | Milestones: {len(user_milestones)}"):
-                st.write("User details")
-                st.dataframe(pd.DataFrame([user_row]), use_container_width=True)
-
-                for _, milestone_row in user_milestones.iterrows():
-                    milestone_id = milestone_row["milestone_id"]
-
-                    user_scores = f_scores[
-                        (f_scores["user_id"] == user_id)
-                        & (f_scores["milestone_id"] == milestone_id)
-                    ]
-
-                    user_sessions = f_sessions[
-                        (f_sessions["user_id"] == user_id)
-                        & (f_sessions["milestone_id"] == milestone_id)
-                    ]
-
-                    user_task_runs = f_task_runs[
-                        (f_task_runs["user_id"] == user_id)
-                        & (f_task_runs["milestone_id"] == milestone_id)
-                    ]
-
-                    with st.expander(
-                        f"Milestone: {milestone_id} | "
-                        f"Scores: {len(user_scores)} | "
-                        f"Sessions: {len(user_sessions)} | "
-                        f"Task Runs: {len(user_task_runs)}"
-                    ):
-                        st.write("Milestone details")
-                        st.dataframe(
-                            pd.DataFrame([milestone_row]),
-                            use_container_width=True,
-                        )
-
-                        st.write("Milestone Score")
-                        if user_scores.empty:
-                            st.info("No score found for this milestone.")
-                        else:
-                            st.dataframe(user_scores, use_container_width=True)
-
-                        st.write("Sessions")
-                        if user_sessions.empty:
-                            st.info("No sessions found for this milestone.")
-                        else:
-                            for _, session_row in user_sessions.iterrows():
-                                session_id = session_row["session_id"]
-
-                                session_tasks = f_task_runs[
-                                    (f_task_runs["user_id"] == user_id)
-                                    & (f_task_runs["milestone_id"] == milestone_id)
-                                    & (f_task_runs["session_id"] == session_id)
-                                ]
-
-                                with st.expander(
-                                    f"Session: {session_id} | "
-                                    f"Games / Task Runs: {len(session_tasks)}"
-                                ):
-                                    st.write("Session details")
-                                    st.dataframe(
-                                        pd.DataFrame([session_row]),
-                                        use_container_width=True,
-                                    )
-
-                                    st.write("Game / Task Run details")
-
-                                    if session_tasks.empty:
-                                        st.info("No games/task runs found for this session.")
-                                    else:
-                                        task_ids = sorted(
-                                            session_tasks["task_id"]
-                                            .dropna()
-                                            .unique()
-                                            .tolist()
-                                        )
-
-                                        selected_session_task_ids = st.multiselect(
-                                            "Select task/game type",
-                                            options=task_ids,
-                                            default=task_ids,
-                                            key=f"tree_task_select_{user_id}_{milestone_id}_{session_id}",
-                                        )
-
-                                        session_task_view = session_tasks[
-                                            session_tasks["task_id"].isin(
-                                                selected_session_task_ids
-                                            )
-                                        ]
-
-                                        st.dataframe(
-                                            session_task_view,
-                                            use_container_width=True,
-                                        )
-
-                                        detected_session_task_cols = [
-                                            col
-                                            for col in session_task_view.columns
-                                            if col
-                                            not in [
-                                                "user_id",
-                                                "milestone_id",
-                                                "session_id",
-                                                "task_id",
-                                            ]
-                                        ]
-
-                                        if detected_session_task_cols:
-                                            selected_session_cols = st.multiselect(
-                                                "Select detected fields to display",
-                                                options=detected_session_task_cols,
-                                                default=detected_session_task_cols[:20],
-                                                key=f"tree_field_select_{user_id}_{milestone_id}_{session_id}",
-                                            )
-
-                                            base_cols = [
-                                                "user_id",
-                                                "milestone_id",
-                                                "session_id",
-                                                "task_id",
-                                            ]
-
-                                            if selected_session_cols:
-                                                st.dataframe(
-                                                    session_task_view[
-                                                        base_cols + selected_session_cols
-                                                    ],
-                                                    use_container_width=True,
-                                                )
 
 
 with tab_scores:
