@@ -13,6 +13,43 @@ APP_CONFIG_LABELS = {
     "app_config_default": "Public App",
 }
 
+def go_home():
+    st.session_state["page"] = "home"
+    st.session_state["selected_app_config"] = None
+    st.session_state["selected_user_id"] = None
+
+
+def go_export():
+    st.session_state["previous_page"] = st.session_state.get("page", "home")
+    st.session_state["page"] = "export"
+
+
+def go_back():
+    st.session_state["page"] = st.session_state.get("previous_page", "home")
+
+
+def open_dataset(app_config_id):
+    st.session_state["selected_app_config"] = app_config_id
+    st.session_state["page"] = "dataset_view"
+
+
+def open_subject(user_id):
+    st.session_state["selected_user_id"] = user_id
+    st.session_state["previous_page"] = st.session_state.get("page", "dataset_view")
+    st.session_state["page"] = "subject_view"
+
+
+if "page" not in st.session_state:
+    st.session_state["page"] = "home"
+
+if "selected_app_config" not in st.session_state:
+    st.session_state["selected_app_config"] = None
+
+if "selected_user_id" not in st.session_state:
+    st.session_state["selected_user_id"] = None
+
+if "previous_page" not in st.session_state:
+    st.session_state["previous_page"] = "home"
 
 def format_datetime_series(series):
     return pd.to_datetime(series, errors="coerce").dt.strftime("%d %B, %Y, %I.%M.%S %p")
@@ -176,21 +213,161 @@ if "selected_app_config" not in st.session_state:
 
 st.subheader("Dataset Home")
 
-card1, card2, card3 = st.columns(3)
+if st.session_state["page"] == "home":
+    st.subheader("Dataset Home")
 
-with card1:
-    if st.button("Testing", use_container_width=True):
-        st.session_state["selected_app_config"] = "app_config_quicktest"
+    card1, card2, card3 = st.columns(3)
 
-with card2:
-    if st.button("Norming", use_container_width=True):
-        st.session_state["selected_app_config"] = "app_config_norm_study"
+    with card1:
+        if st.button("Testing", use_container_width=True):
+            open_dataset("app_config_quicktest")
+            st.rerun()
 
-with card3:
-    if st.button("Public App", use_container_width=True):
-        st.session_state["selected_app_config"] = "app_config_default"
+    with card2:
+        if st.button("Norming", use_container_width=True):
+            open_dataset("app_config_norm_study")
+            st.rerun()
+
+    with card3:
+        if st.button("Public App", use_container_width=True):
+            open_dataset("app_config_default")
+            st.rerun()
+
+    st.divider()
+
+    nav1, nav2 = st.columns(2)
+
+    with nav1:
+        st.button("Home", use_container_width=True, disabled=True)
+
+    with nav2:
+        if st.button("Export", use_container_width=True):
+            go_export()
+            st.rerun()
+
+    st.stop()
 
 
+
+if st.session_state["page"] == "subject_view":
+    selected_user_id = st.session_state["selected_user_id"]
+
+    subject_users = df_users[df_users["user_id"] == selected_user_id]
+    subject_milestones = df_milestones[df_milestones["user_id"] == selected_user_id]
+    subject_scores = df_scores[df_scores["user_id"] == selected_user_id]
+    subject_sessions = df_sessions[df_sessions["user_id"] == selected_user_id]
+    subject_task_runs = df_task_runs[df_task_runs["user_id"] == selected_user_id]
+    subject_task_trials = df_task_trials[df_task_trials["user_id"] == selected_user_id]
+
+    top1, top2, top3 = st.columns([1, 1, 4])
+
+    with top1:
+        if st.button("Home", use_container_width=True):
+            go_home()
+            st.rerun()
+
+    with top2:
+        if st.button("Go Back", use_container_width=True):
+            go_back()
+            st.rerun()
+
+    if subject_users.empty:
+        st.error("Subject not found.")
+        st.stop()
+
+    user_row = subject_users.iloc[0]
+
+    subject_name = user_row.get("user.fullName", "Unknown Name")
+    subject_email = user_row.get("user.email", "")
+
+    st.title(subject_name)
+    st.caption(f"{subject_email} | User ID: {selected_user_id}")
+
+    m1, m2, m3, m4 = st.columns(4)
+
+    m1.metric("Milestones", len(subject_milestones))
+    m2.metric("Sessions", len(subject_sessions))
+    m3.metric("Task Runs", len(subject_task_runs))
+    m4.metric("Trial Rows", len(subject_task_trials))
+
+    st.divider()
+
+    subject_tab1, subject_tab2, subject_tab3, subject_tab4, subject_tab5 = st.tabs(
+        ["Summary", "Milestones", "Sessions", "Task Runs", "Trial Outcomes"]
+    )
+
+    with subject_tab1:
+        st.subheader("Subject Summary")
+
+        st.dataframe(
+            make_user_home_table(subject_users).drop(columns=["_sort_time"], errors="ignore"),
+            use_container_width=True,
+        )
+
+        if not subject_scores.empty:
+            st.markdown("### Milestone-Level Scores")
+            st.dataframe(subject_scores, use_container_width=True, height=300)
+
+        if not subject_task_runs.empty:
+            st.markdown("### Task Run Summary")
+            compact_task_cols = [
+                col for col in subject_task_runs.columns
+                if col in ["user_id", "milestone_id", "session_id", "task_id"]
+                or col.startswith("task.result.summary")
+                or col in ["task.status", "task.result.run.durationMs", "task.result.run.taskId"]
+            ]
+            st.dataframe(subject_task_runs[compact_task_cols], use_container_width=True)
+
+    with subject_tab2:
+        if subject_milestones.empty:
+            st.info("No milestones found.")
+        else:
+            for _, milestone_row in subject_milestones.iterrows():
+                milestone_id = milestone_row["milestone_id"]
+
+                milestone_sessions = subject_sessions[
+                    subject_sessions["milestone_id"] == milestone_id
+                ]
+
+                milestone_scores = subject_scores[
+                    subject_scores["milestone_id"] == milestone_id
+                ]
+
+                with st.expander(
+                    f"Milestone: {milestone_id} | Sessions: {len(milestone_sessions)}"
+                ):
+                    st.write("Milestone Details")
+                    st.dataframe(pd.DataFrame([milestone_row]), use_container_width=True)
+
+                    st.write("Score")
+                    st.dataframe(milestone_scores, use_container_width=True)
+
+                    for _, session_row in milestone_sessions.iterrows():
+                        session_id = session_row["session_id"]
+
+                        session_tasks = subject_task_runs[
+                            (subject_task_runs["milestone_id"] == milestone_id)
+                            & (subject_task_runs["session_id"] == session_id)
+                        ]
+
+                        with st.expander(
+                            f"Session: {session_id} | Task Runs: {len(session_tasks)}"
+                        ):
+                            st.dataframe(pd.DataFrame([session_row]), use_container_width=True)
+                            st.dataframe(session_tasks, use_container_width=True)
+
+    with subject_tab3:
+        st.dataframe(subject_sessions, use_container_width=True, height=450)
+
+    with subject_tab4:
+        st.dataframe(subject_task_runs, use_container_width=True, height=450)
+
+    with subject_tab5:
+        st.dataframe(subject_task_trials, use_container_width=True, height=450)
+
+    st.stop()
+    
+    
 selected_config = st.session_state["selected_app_config"]
 
 if selected_config is None:
@@ -397,139 +574,146 @@ with group_tab3:
 with group_tab4:
     st.dataframe(group_task_trials, use_container_width=True, height=400)
     
-st.divider()
-st.subheader("Export Data")
+if st.session_state["page"] == "export":
+    top1, top2, top3 = st.columns([1, 1, 4])
 
-export_mode = st.radio(
-    "Export scope",
-    options=[
-        "Current dataset group",
-        "Selected subject",
-        "Group analysis selection",
-        "All data",
-    ],
-    horizontal=True,
-)
+    with top1:
+        if st.button("Home", use_container_width=True):
+            go_home()
+            st.rerun()
 
-if export_mode == "Current dataset group":
-    export_users = config_users
-    export_user_ids = export_users["user_id"].tolist()
+    with top2:
+        if st.button("Go Back", use_container_width=True):
+            go_back()
+            st.rerun()
 
-elif export_mode == "Selected subject":
-    export_users = subject_users
-    export_user_ids = export_users["user_id"].tolist()
+    st.title("Export Data")
 
-elif export_mode == "Group analysis selection":
-    export_users = group_users
-    export_user_ids = export_users["user_id"].tolist()
+    selected_config = st.session_state.get("selected_app_config")
 
-else:
-    export_users = df_users
-    export_user_ids = export_users["user_id"].tolist()
+    if selected_config:
+        default_users = get_selected_config_users(df_users, selected_config)
+        selected_config_label = APP_CONFIG_LABELS.get(selected_config, selected_config)
+        st.caption(f"Current dataset: {selected_config_label}")
+    else:
+        default_users = df_users
+        st.caption("Current dataset: All data")
 
+    default_user_options = []
 
-export_milestones = df_milestones[df_milestones["user_id"].isin(export_user_ids)]
-export_scores = df_scores[df_scores["user_id"].isin(export_user_ids)]
-export_sessions = df_sessions[df_sessions["user_id"].isin(export_user_ids)]
-export_task_runs = df_task_runs[df_task_runs["user_id"].isin(export_user_ids)]
-export_task_trials = df_task_trials[df_task_trials["user_id"].isin(export_user_ids)]
+    for _, row in default_users.iterrows():
+        name = row.get("user.fullName", "Unknown Name")
+        user_id = row.get("user_id", "")
+        updated = row.get("user.updatedAt", "")
 
-e1, e2, e3, e4, e5, e6 = st.columns(6)
+        try:
+            updated_str = pd.to_datetime(updated).strftime("%d %B, %Y")
+        except Exception:
+            updated_str = ""
 
-e1.metric("Users", len(export_users))
-e2.metric("Milestones", len(export_milestones))
-e3.metric("Scores", len(export_scores))
-e4.metric("Sessions", len(export_sessions))
-e5.metric("Task Runs", len(export_task_runs))
-e6.metric("Trial Rows", len(export_task_trials))
+        default_user_options.append(
+            {
+                "label": f"{name} | {user_id} | {updated_str}",
+                "user_id": user_id,
+            }
+        )
 
-json_scope_level = st.selectbox(
-    "JSON export level",
-    ["Subject/User level", "Milestone level", "Session level"],
-)
+    all_labels = [u["label"] for u in default_user_options]
 
-excel_file = create_excel_bytes(
-    export_users,
-    export_milestones,
-    export_scores,
-    export_sessions,
-    export_task_runs,
-    export_task_trials,
-)
-
-json_file = create_json_bytes(
-    export_users,
-    export_milestones,
-    export_scores,
-    export_sessions,
-    export_task_runs,
-    json_scope_level,
-)
-
-download_col1, download_col2 = st.columns(2)
-
-with download_col1:
-    st.download_button(
-        label="Download Raw JSON Export",
-        data=json_file,
-        file_name="firestore_export.json",
-        mime="application/json",
-        use_container_width=True,
+    select_action = st.radio(
+        "Selection mode",
+        ["Select All", "Deselect All", "Multiple Selection"],
+        horizontal=True,
     )
 
-with download_col2:
-    st.download_button(
-        label="Download Excel Workbook",
-        data=excel_file,
-        file_name="firestore_export.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True,
+    if select_action == "Select All":
+        selected_labels = all_labels
+
+    elif select_action == "Deselect All":
+        selected_labels = []
+
+    else:
+        selected_labels = st.multiselect(
+            "Select users",
+            options=all_labels,
+            default=all_labels,
+        )
+
+    selected_export_user_ids = [
+        u["user_id"] for u in default_user_options if u["label"] in selected_labels
+    ]
+
+    export_level = st.radio(
+        "Export level",
+        ["Subject/User level", "Milestone level", "Session level", "Game wise"],
+        horizontal=True,
     )
 
-csv_col1, csv_col2, csv_col3 = st.columns(3)
+    export_users = df_users[df_users["user_id"].isin(selected_export_user_ids)]
+    export_milestones = df_milestones[df_milestones["user_id"].isin(selected_export_user_ids)]
+    export_scores = df_scores[df_scores["user_id"].isin(selected_export_user_ids)]
+    export_sessions = df_sessions[df_sessions["user_id"].isin(selected_export_user_ids)]
+    export_task_runs = df_task_runs[df_task_runs["user_id"].isin(selected_export_user_ids)]
+    export_task_trials = df_task_trials[df_task_trials["user_id"].isin(selected_export_user_ids)]
 
-with csv_col1:
-    st.download_button(
-        label="Download Users CSV",
-        data=export_users.to_csv(index=False).encode("utf-8"),
-        file_name="users.csv",
-        mime="text/csv",
-        use_container_width=True,
+    if export_level == "Milestone level":
+        valid_users = export_milestones["user_id"].unique().tolist()
+        export_users = export_users[export_users["user_id"].isin(valid_users)]
+
+    if export_level == "Session level":
+        valid_users = export_sessions["user_id"].unique().tolist()
+        export_users = export_users[export_users["user_id"].isin(valid_users)]
+
+    if export_level == "Game wise":
+        valid_users = export_task_runs["user_id"].unique().tolist()
+        export_users = export_users[export_users["user_id"].isin(valid_users)]
+
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
+
+    c1.metric("Users", len(export_users))
+    c2.metric("Milestones", len(export_milestones))
+    c3.metric("Scores", len(export_scores))
+    c4.metric("Sessions", len(export_sessions))
+    c5.metric("Task Runs", len(export_task_runs))
+    c6.metric("Trial Rows", len(export_task_trials))
+
+    json_file = create_json_bytes(
+        export_users,
+        export_milestones,
+        export_scores,
+        export_sessions,
+        export_task_runs,
+        export_level,
     )
 
-    st.download_button(
-        label="Download Scores CSV",
-        data=export_scores.to_csv(index=False).encode("utf-8"),
-        file_name="scores.csv",
-        mime="text/csv",
-        use_container_width=True,
+    excel_file = create_excel_bytes(
+        export_users,
+        export_milestones,
+        export_scores,
+        export_sessions,
+        export_task_runs,
+        export_task_trials,
     )
 
-with csv_col2:
-    st.download_button(
-        label="Download Milestones CSV",
-        data=export_milestones.to_csv(index=False).encode("utf-8"),
-        file_name="milestones.csv",
-        mime="text/csv",
-        use_container_width=True,
-    )
+    col_a, col_b = st.columns(2)
 
-    st.download_button(
-        label="Download Task Runs CSV",
-        data=export_task_runs.to_csv(index=False).encode("utf-8"),
-        file_name="task_runs.csv",
-        mime="text/csv",
-        use_container_width=True,
-    )
+    with col_a:
+        st.download_button(
+            label="Download JSON",
+            data=json_file,
+            file_name="firestore_export.json",
+            mime="application/json",
+            use_container_width=True,
+        )
 
-with csv_col3:
-    st.download_button(
-        label="Download Sessions CSV",
-        data=export_sessions.to_csv(index=False).encode("utf-8"),
-        file_name="sessions.csv",
-        mime="text/csv",
-        use_container_width=True,
-    )
+    with col_b:
+        st.download_button(
+            label="Download Excel Workbook",
+            data=excel_file,
+            file_name="firestore_export.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+        )
 
     st.download_button(
         label="Download Task Trials CSV",
@@ -539,4 +723,4 @@ with csv_col3:
         use_container_width=True,
     )
 
-
+    st.stop()
