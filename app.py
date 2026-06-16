@@ -13,76 +13,6 @@ st.set_page_config(
     layout="wide",
 )
 
-st.markdown(
-    """
-    <style>
-    div[data-testid="stExpander"] {
-        border-radius: 10px;
-    }
-
-    .compact-task-grid {
-        display: grid;
-        grid-template-columns: repeat(5, minmax(150px, 1fr));
-        gap: 10px;
-        margin-top: 8px;
-        margin-bottom: 8px;
-    }
-
-    .compact-task-card {
-        border: 1px solid rgba(250, 250, 250, 0.15);
-        border-radius: 10px;
-        padding: 12px 14px;
-        background: rgba(255, 255, 255, 0.025);
-        min-height: 100px;
-    }
-
-    .compact-task-title {
-        font-size: 18px;
-        font-weight: 700;
-        margin-bottom: 14px;
-        color: #f5f5f5;
-    }
-
-    .compact-metric-row {
-        display: grid;
-        grid-template-columns: repeat(3, 1fr);
-        gap: 8px;
-    }
-
-    .compact-metric-label {
-        font-size: 12px;
-        color: rgba(250, 250, 250, 0.65);
-        margin-bottom: 4px;
-    }
-
-    .compact-metric-value {
-        font-size: 15px;
-        font-weight: 700;
-        color: #f5f5f5;
-        white-space: nowrap;
-    }
-
-    .metric-green {
-        color: #4ade80;
-    }
-
-    .metric-red {
-        color: #f87171;
-    }
-
-    .metric-blue {
-        color: #60a5fa;
-    }
-
-    @media (max-width: 1200px) {
-        .compact-task-grid {
-            grid-template-columns: repeat(2, minmax(150px, 1fr));
-        }
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
 
 
 APP_CONFIG_LABELS = {
@@ -160,7 +90,65 @@ def render_compact_task_grid(session_tasks):
         "survey_self_knowledge",
     ]
 
-    cards_html = '<div class="compact-task-grid">'
+    cards_html = """
+    <style>
+    .compact-task-grid {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(140px, 1fr));
+        gap: 10px;
+        margin-top: 8px;
+        margin-bottom: 8px;
+    }
+
+    .compact-task-card {
+        border: 1px solid rgba(250, 250, 250, 0.15);
+        border-radius: 10px;
+        padding: 12px 14px;
+        background: rgba(255, 255, 255, 0.025);
+        min-height: 95px;
+    }
+
+    .compact-task-title {
+        font-size: 17px;
+        font-weight: 700;
+        margin-bottom: 14px;
+        color: #f5f5f5;
+    }
+
+    .compact-metric-row {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 8px;
+    }
+
+    .compact-metric-label {
+        font-size: 12px;
+        color: rgba(250, 250, 250, 0.65);
+        margin-bottom: 4px;
+    }
+
+    .compact-metric-value {
+        font-size: 15px;
+        font-weight: 700;
+        color: #f5f5f5;
+        white-space: nowrap;
+    }
+
+    .metric-green {
+        color: #4ade80;
+    }
+
+    .metric-red {
+        color: #f87171;
+    }
+
+    .metric-blue {
+        color: #60a5fa;
+    }
+    </style>
+
+    <div class="compact-task-grid">
+    """
 
     for task_type in task_order:
         task_rows = session_tasks[
@@ -188,19 +176,19 @@ def render_compact_task_grid(session_tasks):
             metric_class = compact_metric_class(metric_name, metric_value)
 
             metric_items += f"""
-                <div>
-                    <div class="compact-metric-label">{compact_metric_label(metric_name)}</div>
-                    <div class="compact-metric-value {metric_class}">{value_text}</div>
-                </div>
+            <div>
+                <div class="compact-metric-label">{compact_metric_label(metric_name)}</div>
+                <div class="compact-metric-value {metric_class}">{value_text}</div>
+            </div>
             """
 
         cards_html += f"""
-            <div class="compact-task-card">
-                <div class="compact-task-title">{icon} {display_name}</div>
-                <div class="compact-metric-row">
-                    {metric_items}
-                </div>
+        <div class="compact-task-card">
+            <div class="compact-task-title">{icon} {display_name}</div>
+            <div class="compact-metric-row">
+                {metric_items}
             </div>
+        </div>
         """
 
     cards_html += "</div>"
