@@ -90,110 +90,37 @@ def render_compact_task_grid(session_tasks):
         "survey_self_knowledge",
     ]
 
-    cards_html = """
-    <style>
-    .compact-task-grid {
-        display: grid;
-        grid-template-columns: repeat(5, minmax(140px, 1fr));
-        gap: 10px;
-        margin-top: 8px;
-        margin-bottom: 8px;
-    }
+    task_cols = st.columns(5)
 
-    .compact-task-card {
-        border: 1px solid rgba(250, 250, 250, 0.15);
-        border-radius: 10px;
-        padding: 12px 14px;
-        background: rgba(255, 255, 255, 0.025);
-        min-height: 95px;
-    }
-
-    .compact-task-title {
-        font-size: 17px;
-        font-weight: 700;
-        margin-bottom: 14px;
-        color: #f5f5f5;
-    }
-
-    .compact-metric-row {
-        display: grid;
-        grid-template-columns: repeat(3, 1fr);
-        gap: 8px;
-    }
-
-    .compact-metric-label {
-        font-size: 12px;
-        color: rgba(250, 250, 250, 0.65);
-        margin-bottom: 4px;
-    }
-
-    .compact-metric-value {
-        font-size: 15px;
-        font-weight: 700;
-        color: #f5f5f5;
-        white-space: nowrap;
-    }
-
-    .metric-green {
-        color: #4ade80;
-    }
-
-    .metric-red {
-        color: #f87171;
-    }
-
-    .metric-blue {
-        color: #60a5fa;
-    }
-    </style>
-
-    <div class="compact-task-grid">
-    """
-
-    for task_type in task_order:
+    for col, task_type in zip(task_cols, task_order):
         task_rows = session_tasks[
             session_tasks.apply(lambda r: get_task_type(r) == task_type, axis=1)
         ]
 
-        if task_rows.empty:
-            continue
+        with col:
+            if task_rows.empty:
+                continue
 
-        task_row = task_rows.iloc[0]
-        display_name = TASK_DISPLAY_NAMES.get(task_type, task_type)
-        icon = TASK_ICONS.get(task_type, "📌")
-        metrics = get_task_summary_metrics(task_row)
+            task_row = task_rows.iloc[0]
+            display_name = TASK_DISPLAY_NAMES.get(task_type, task_type)
+            icon = TASK_ICONS.get(task_type, "📌")
+            metrics = get_task_summary_metrics(task_row)
 
-        metric_items = ""
+            with st.container(border=True):
+                st.markdown(f"**{icon} {display_name}**")
 
-        for metric_name, metric_value in metrics.items():
-            if metric_name in ["Accuracy", "Omission"]:
-                value_text = fmt_value(metric_value, "%")
-            elif "RT" in metric_name:
-                value_text = fmt_value(metric_value, "")
-            else:
-                value_text = fmt_value(metric_value)
+                for metric_name, metric_value in metrics.items():
+                    if metric_name in ["Accuracy", "Omission"]:
+                        value_text = fmt_value(metric_value, "%")
+                    elif "RT" in metric_name:
+                        value_text = fmt_value(metric_value, "")
+                    else:
+                        value_text = fmt_value(metric_value)
 
-            metric_class = compact_metric_class(metric_name, metric_value)
+                    label = compact_metric_label(metric_name)
 
-            metric_items += f"""
-            <div>
-                <div class="compact-metric-label">{compact_metric_label(metric_name)}</div>
-                <div class="compact-metric-value {metric_class}">{value_text}</div>
-            </div>
-            """
-
-        cards_html += f"""
-        <div class="compact-task-card">
-            <div class="compact-task-title">{icon} {display_name}</div>
-            <div class="compact-metric-row">
-                {metric_items}
-            </div>
-        </div>
-        """
-
-    cards_html += "</div>"
-
-    st.markdown(cards_html, unsafe_allow_html=True)
+                    st.caption(label)
+                    st.markdown(f"**{value_text}**")
 
 
 if "page" not in st.session_state:
