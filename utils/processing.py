@@ -1,5 +1,4 @@
 from datetime import datetime
-import pandas as pd
 import ast
 import json
 import pandas as pd
@@ -149,7 +148,7 @@ def clean_scores_dataframe(df_scores):
         "score.hashedUserId",
         "score.scoreBasisSignature",
         "score.flags.scoreHistory",
-        "score.flags.summed_scaled_score",
+        # keep score.flags.summed_scaled_score for dashboard visualisation
         "score.flags.scoring_fallback.reason",
         "score.flags.scoring_fallback.primaryFailureMessage",
         "score.flags.scoring_fallback.effectiveConfigId",
