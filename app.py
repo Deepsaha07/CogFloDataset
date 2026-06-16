@@ -13,6 +13,77 @@ st.set_page_config(
     layout="wide",
 )
 
+st.markdown(
+    """
+    <style>
+    div[data-testid="stExpander"] {
+        border-radius: 10px;
+    }
+
+    .compact-task-grid {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(150px, 1fr));
+        gap: 10px;
+        margin-top: 8px;
+        margin-bottom: 8px;
+    }
+
+    .compact-task-card {
+        border: 1px solid rgba(250, 250, 250, 0.15);
+        border-radius: 10px;
+        padding: 12px 14px;
+        background: rgba(255, 255, 255, 0.025);
+        min-height: 100px;
+    }
+
+    .compact-task-title {
+        font-size: 18px;
+        font-weight: 700;
+        margin-bottom: 14px;
+        color: #f5f5f5;
+    }
+
+    .compact-metric-row {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 8px;
+    }
+
+    .compact-metric-label {
+        font-size: 12px;
+        color: rgba(250, 250, 250, 0.65);
+        margin-bottom: 4px;
+    }
+
+    .compact-metric-value {
+        font-size: 15px;
+        font-weight: 700;
+        color: #f5f5f5;
+        white-space: nowrap;
+    }
+
+    .metric-green {
+        color: #4ade80;
+    }
+
+    .metric-red {
+        color: #f87171;
+    }
+
+    .metric-blue {
+        color: #60a5fa;
+    }
+
+    @media (max-width: 1200px) {
+        .compact-task-grid {
+            grid-template-columns: repeat(2, minmax(150px, 1fr));
+        }
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 
 APP_CONFIG_LABELS = {
     "app_config_quicktest": "Testing",
@@ -48,6 +119,93 @@ def open_subject(user_id):
     st.session_state["selected_user_id"] = user_id
     st.session_state["previous_page"] = st.session_state.get("page", "dataset_view")
     st.session_state["page"] = "subject_view"
+    
+    
+def compact_metric_label(name):
+    label_map = {
+        "Accuracy": "Acc",
+        "Omission": "Omis",
+        "Mean RT": "RT (ms)",
+        "Conflict Score": "Conflict",
+        "Final Score": "Score",
+    }
+    return label_map.get(name, name)
+
+
+def compact_metric_class(name, value):
+    if name == "Accuracy":
+        return "metric-green"
+
+    if name == "Omission":
+        try:
+            v = float(value)
+            if v <= 1:
+                v *= 100
+            return "metric-red" if v > 0 else ""
+        except Exception:
+            return ""
+
+    if name in ["Conflict Score", "Final Score"]:
+        return "metric-blue"
+
+    return ""
+
+
+def render_compact_task_grid(session_tasks):
+    task_order = [
+        "cd",
+        "gng",
+        "msit",
+        "survey_arousal",
+        "survey_self_knowledge",
+    ]
+
+    cards_html = '<div class="compact-task-grid">'
+
+    for task_type in task_order:
+        task_rows = session_tasks[
+            session_tasks.apply(lambda r: get_task_type(r) == task_type, axis=1)
+        ]
+
+        if task_rows.empty:
+            continue
+
+        task_row = task_rows.iloc[0]
+        display_name = TASK_DISPLAY_NAMES.get(task_type, task_type)
+        icon = TASK_ICONS.get(task_type, "📌")
+        metrics = get_task_summary_metrics(task_row)
+
+        metric_items = ""
+
+        for metric_name, metric_value in metrics.items():
+            if metric_name in ["Accuracy", "Omission"]:
+                value_text = fmt_value(metric_value, "%")
+            elif "RT" in metric_name:
+                value_text = fmt_value(metric_value, "")
+            else:
+                value_text = fmt_value(metric_value)
+
+            metric_class = compact_metric_class(metric_name, metric_value)
+
+            metric_items += f"""
+                <div>
+                    <div class="compact-metric-label">{compact_metric_label(metric_name)}</div>
+                    <div class="compact-metric-value {metric_class}">{value_text}</div>
+                </div>
+            """
+
+        cards_html += f"""
+            <div class="compact-task-card">
+                <div class="compact-task-title">{icon} {display_name}</div>
+                <div class="compact-metric-row">
+                    {metric_items}
+                </div>
+            </div>
+        """
+
+    cards_html += "</div>"
+
+    st.markdown(cards_html, unsafe_allow_html=True)
 
 
 if "page" not in st.session_state:
@@ -768,18 +926,7 @@ if st.session_state["page"] == "subject_view":
                                         "survey_self_knowledge",
                                     ]
 
-                                    for task_type in task_types_order:
-                                        task_rows = session_tasks[
-                                            session_tasks.apply(
-                                                lambda r: get_task_type(r) == task_type,
-                                                axis=1,
-                                            )
-                                        ]
-
-                                        if task_rows.empty:
-                                            continue
-
-                                        render_task_summary_card(task_rows.iloc[0])
+                                    render_compact_task_grid(session_tasks)
 
     # ----------------------------
     # RAW DATA
