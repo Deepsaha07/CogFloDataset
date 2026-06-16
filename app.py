@@ -229,9 +229,9 @@ def get_task_summary_metrics(task_row):
 
 
 def render_metric_card(label, value, icon="📌"):
-    st.markdown(f"#### {icon} {label}")
-    st.metric("Score", fmt_value(value))
-
+    with st.container(border=True):
+        st.markdown(f"**{icon} {label}**")
+        st.caption(fmt_value(value))
 
 def render_task_summary_card(task_row):
     task_type = get_task_type(task_row)
@@ -240,22 +240,25 @@ def render_task_summary_card(task_row):
     metrics = get_task_summary_metrics(task_row)
 
     with st.container(border=True):
-        st.markdown(f"### {icon} {display_name}")
+        st.markdown(f"**{icon} {display_name}**")
 
         if not metrics:
-            st.info("No summary metrics detected.")
+            st.caption("No summary metrics detected.")
             return
 
         cols = st.columns(len(metrics))
 
         for col, (metric_name, metric_value) in zip(cols, metrics.items()):
             with col:
-                if "Accuracy" in metric_name or "Omission" in metric_name:
-                    st.metric(metric_name, fmt_value(metric_value, "%"))
+                if metric_name in ["Accuracy", "Omission"]:
+                    value_text = fmt_value(metric_value, "%")
                 elif "RT" in metric_name:
-                    st.metric(metric_name, fmt_value(metric_value, " ms"))
+                    value_text = fmt_value(metric_value, " ms")
                 else:
-                    st.metric(metric_name, fmt_value(metric_value))
+                    value_text = fmt_value(metric_value)
+
+                st.caption(metric_name)
+                st.markdown(f"**{value_text}**")
 
 
 def render_accuracy_pie(task_name, accuracy):
