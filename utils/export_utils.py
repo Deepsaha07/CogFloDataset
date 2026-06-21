@@ -176,14 +176,26 @@ def create_summary_rows_export(df_users, df_sessions, df_task_runs):
         df_long.to_excel(writer, sheet_name="summary_rows_all", index=False)
 
         if not df_long.empty:
-            df_template = df_long.pivot_table(
-                index="export_row_name",
-                columns=["user_id", "milestone_id", "session_id"],
-                values="value",
-                aggfunc="first",
-            ).reset_index()
+            df_template = df_long.copy()
 
-            df_template.to_excel(writer, sheet_name="template_like", index=False)
+        df_template["subject_session_column"] = (
+            df_template["user_id"].astype(str)
+            + "_"
+            + df_template["milestone_id"].astype(str)
+            + "_"
+            + df_template["session_id"].astype(str)
+        )
+
+        df_template = df_template.pivot_table(
+            index="export_row_name",
+            columns="subject_session_column",
+            values="value",
+            aggfunc="first",
+        ).reset_index()
+
+        df_template.columns = [str(col) for col in df_template.columns]
+
+        df_template.to_excel(writer, sheet_name="template_like", index=False)
 
     output.seek(0)
     return output
