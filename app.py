@@ -5,7 +5,7 @@ import plotly.express as px
 from services.firestore_service import fetch_firestore_data
 from utils.processing import rows_to_dataframes
 from utils.export_utils import create_excel_bytes, create_json_bytes
-
+from utils.export_utils import create_excel_bytes, create_json_bytes, create_summary_rows_export
 
 st.set_page_config(
     page_title="CogFlo Analytics Dashboard",
@@ -606,6 +606,20 @@ if st.session_state["page"] == "export":
         data=export_task_trials.to_csv(index=False).encode("utf-8"),
         file_name="task_trials.csv",
         mime="text/csv",
+        use_container_width=True,
+    )
+    
+    summary_rows_file = create_summary_rows_export(
+        export_users,
+        export_sessions,
+        export_task_runs,
+    )
+
+    st.download_button(
+        label="Download Summary Rows Diagnostic Export",
+        data=summary_rows_file,
+        file_name="summary_rows_diagnostic.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         use_container_width=True,
     )
 

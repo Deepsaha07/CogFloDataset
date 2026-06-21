@@ -120,3 +120,70 @@ def save_excel_file(df_users, df_milestones, df_scores, df_sessions):
         df_sessions_excel.to_excel(writer, sheet_name="sessions", index=False)
 
     return path
+
+from io import BytesIO
+import pandas as pd
+
+
+def create_summary_rows_export(df_users, df_sessions, df_task_runs):
+    rows = []
+
+    summary_cols = [
+        col for col in df_task_runs.columns
+        if col.startswith("task.result.summary.")
+    ]
+
+    for _, task_row in df_task_runs.iterrows():
+        user_id = task_row.get("user_id")
+        milestone_id = task_row.get("milestone_id")
+        session_id = task_row.get("session_id")
+        task_id = (
+            task_row.get("task.result.run.taskId")
+            or task_row.get("task.context.taskId")
+            or task_row.get("task_id")
+        )
+
+        user_match = df_users[df_users["user_id"] == user_id]
+        name = user_match.iloc[0].get("user.fullName", "") if not user_match.empty else ""
+        email = user_match.iloc[0].get("user.email", "") if not user_match.empty else ""
+
+        for col in summary_cols:
+            value = task_row.get(col)
+
+            if pd.isna(value):
+                continue
+
+            clean_metric = col.replace("task.result.summary.", "")
+            export_row_name = f"{task_id}_{clean_metric}"
+
+            rows.append({
+                "user_id": user_id,
+                "name": name,
+                "email": email,
+                "milestone_id": milestone_id,
+                "session_id": session_id,
+                "task_id": task_id,
+                "export_row_name": export_row_name,
+                "source_column": col,
+                "value": value,
+            })
+
+    df_long = pd.DataFrame(rows)
+
+    output = BytesIO()
+
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df_long.to_excel(writer, sheet_name="summary_rows_all", index=False)
+
+        if not df_long.empty:
+            df_template = df_long.pivot_table(
+                index="export_row_name",
+                columns=["user_id", "milestone_id", "session_id"],
+                values="value",
+                aggfunc="first",
+            ).reset_index()
+
+            df_template.to_excel(writer, sheet_name="template_like", index=False)
+
+    output.seek(0)
+    return output
