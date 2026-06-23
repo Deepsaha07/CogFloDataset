@@ -3,10 +3,174 @@ from io import BytesIO
 import pandas as pd
 
 from utils.processing import make_excel_safe
-
+import ast
 import json
 from io import BytesIO
 
+TASK_NAME_MAP = {
+    "cd": "CD",
+    "gng": "GNG",
+    "msit": "MSIT",
+    "survey_arousal": "Arousal",
+    "survey_self_knowledge": "Self Knowledge",
+}
+
+
+def safe_sheet_name(name):
+    invalid = ["\\", "/", "*", "?", ":", "[", "]"]
+    for ch in invalid:
+        name = name.replace(ch, "_")
+    return str(name)[:31]
+
+
+def parse_trials(value):
+    if value is None or pd.isna(value):
+        return []
+
+    if isinstance(value, list):
+        return value
+
+    if isinstance(value, str):
+        try:
+            parsed = ast.literal_eval(value)
+            if isinstance(parsed, list):
+                return parsed
+        except Exception:
+            pass
+
+        try:
+            parsed = json.loads(value)
+            if isinstance(parsed, list):
+                return parsed
+        except Exception:
+            pass
+
+    return []
+
+
+def get_task_type_from_row(task_row):
+    return (
+        task_row.get("task.result.run.taskId")
+        or task_row.get("task.context.taskId")
+        or task_row.get("task_id", "").split("-")[0]
+    )
+
+
+def make_trial_export_rows(task_row):
+    trials = parse_trials(task_row.get("task.result.trials"))
+    rows_by_phase = {"practice": [], "test": []}
+
+    for trial in trials:
+        if not isinstance(trial, dict):
+            continue
+
+        outcome = trial.get("outcome", {}) or {}
+        timings = trial.get("timings", {}) or {}
+
+        block_stage = str(trial.get("blockStage", "")).lower()
+        phase = "practice" if block_stage == "practice" else "test"
+
+        rows_by_phase[phase].append(
+            {
+                "Index": trial.get("index"),
+                "Actual": outcome.get("expectedResponse"),
+                "Response": outcome.get("response"),
+                "Correct response": 1 if outcome.get("wasCorrect") is True else 0,
+                "Reaction time": timings.get("rt_ms"),
+                "Timeout": outcome.get("wasTimeout"),
+            }
+        )
+
+    return rows_by_phase
+
+def create_task_wise_trials_export(df_users, df_task_runs):
+    output = BytesIO()
+
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        if df_task_runs.empty:
+            pd.DataFrame().to_excel(writer, sheet_name="empty", index=False)
+            output.seek(0)
+            return output
+
+        grouped = df_task_runs.groupby(
+            ["milestone_id", "session_id"],
+            dropna=False,
+        )
+
+        for (milestone_id, session_id), group_df in grouped:
+            for task_type in ["cd", "gng", "msit"]:
+                task_rows = group_df[
+                    group_df.apply(
+                        lambda r: get_task_type_from_row(r) == task_type,
+                        axis=1,
+                    )
+                ]
+
+                if task_rows.empty:
+                    continue
+
+                sheet_rows = []
+
+                for _, task_row in task_rows.iterrows():
+                    user_id = task_row.get("user_id")
+
+                    user_match = df_users[df_users["user_id"] == user_id]
+                    if not user_match.empty:
+                        user_name = user_match.iloc[0].get("user.fullName", "")
+                        user_email = user_match.iloc[0].get("user.email", "")
+                    else:
+                        user_name = ""
+                        user_email = ""
+
+                    sheet_rows.append(
+                        {
+                            "Index": f"Participant: {user_name}",
+                            "Actual": f"User ID: {user_id}",
+                            "Response": f"Email: {user_email}",
+                            "Correct response": "",
+                            "Reaction time": "",
+                            "Timeout": "",
+                        }
+                    )
+                    sheet_rows.append({})
+
+                    phase_rows = make_trial_export_rows(task_row)
+
+                    for phase_label, phase_key in [("Practice", "practice"), ("Test", "test")]:
+                        rows = phase_rows.get(phase_key, [])
+
+                        if not rows:
+                            continue
+
+                        sheet_rows.append(
+                            {
+                                "Index": phase_label,
+                                "Actual": "",
+                                "Response": "",
+                                "Correct response": "",
+                                "Reaction time": "",
+                                "Timeout": "",
+                            }
+                        )
+
+                        sheet_rows.extend(rows)
+
+                        sheet_rows.append({})
+                        sheet_rows.append({})
+                        sheet_rows.append({})
+
+                sheet_name = safe_sheet_name(
+                    f"{milestone_id}_{session_id}_{TASK_NAME_MAP.get(task_type, task_type)}"
+                )
+
+                pd.DataFrame(sheet_rows).to_excel(
+                    writer,
+                    sheet_name=sheet_name,
+                    index=False,
+                )
+
+    output.seek(0)
+    return output
 
 def create_json_bytes(df_users, df_milestones, df_scores, df_sessions, df_task_runs, scope_level):
     data = []

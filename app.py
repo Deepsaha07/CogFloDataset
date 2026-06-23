@@ -4,15 +4,18 @@ import plotly.express as px
 
 from services.firestore_service import fetch_firestore_data
 from utils.processing import rows_to_dataframes
-from utils.export_utils import create_excel_bytes, create_json_bytes
-from utils.export_utils import create_excel_bytes, create_json_bytes, create_summary_rows_export
+from utils.export_utils import (
+    create_summary_rows_export,
+    create_task_wise_trials_export,
+    parse_trials,
+)
+
 
 st.set_page_config(
     page_title="CogFlo Analytics Dashboard",
     page_icon="📊",
     layout="wide",
 )
-
 
 
 APP_CONFIG_LABELS = {
@@ -22,15 +25,27 @@ APP_CONFIG_LABELS = {
 }
 
 
+TASK_DISPLAY_NAMES = {
+    "cd": "CD",
+    "gng": "GNG",
+    "msit": "MSIT",
+    "survey_arousal": "Arousal",
+    "survey_self_knowledge": "Self Knowledge",
+}
+
+TASK_ICONS = {
+    "cd": "🧠",
+    "gng": "🎯",
+    "msit": "⚡",
+    "survey_arousal": "😊",
+    "survey_self_knowledge": "📘",
+}
+
+
 def go_home():
     st.session_state["page"] = "home"
     st.session_state["selected_app_config"] = None
     st.session_state["selected_user_id"] = None
-
-
-def go_export():
-    st.session_state["previous_page"] = st.session_state.get("page", "home")
-    st.session_state["page"] = "export"
 
 
 def go_back():
@@ -49,78 +64,6 @@ def open_subject(user_id):
     st.session_state["selected_user_id"] = user_id
     st.session_state["previous_page"] = st.session_state.get("page", "dataset_view")
     st.session_state["page"] = "subject_view"
-    
-    
-def compact_metric_label(name):
-    label_map = {
-        "Accuracy": "Acc",
-        "Omission": "Omis",
-        "Mean RT": "RT (ms)",
-        "Conflict Score": "Conflict",
-        "Final Score": "Score",
-    }
-    return label_map.get(name, name)
-
-
-def compact_metric_class(name, value):
-    if name == "Accuracy":
-        return "metric-green"
-
-    if name == "Omission":
-        try:
-            v = float(value)
-            if v <= 1:
-                v *= 100
-            return "metric-red" if v > 0 else ""
-        except Exception:
-            return ""
-
-    if name in ["Conflict Score", "Final Score"]:
-        return "metric-blue"
-
-    return ""
-
-
-def render_compact_task_grid(session_tasks):
-    task_order = [
-        "cd",
-        "gng",
-        "msit",
-        "survey_arousal",
-        "survey_self_knowledge",
-    ]
-
-    task_cols = st.columns(5)
-
-    for col, task_type in zip(task_cols, task_order):
-        task_rows = session_tasks[
-            session_tasks.apply(lambda r: get_task_type(r) == task_type, axis=1)
-        ]
-
-        with col:
-            if task_rows.empty:
-                continue
-
-            task_row = task_rows.iloc[0]
-            display_name = TASK_DISPLAY_NAMES.get(task_type, task_type)
-            icon = TASK_ICONS.get(task_type, "📌")
-            metrics = get_task_summary_metrics(task_row)
-
-            with st.container(border=True):
-                st.markdown(f"**{icon} {display_name}**")
-
-                for metric_name, metric_value in metrics.items():
-                    if metric_name in ["Accuracy", "Omission"]:
-                        value_text = fmt_value(metric_value, "%")
-                    elif "RT" in metric_name:
-                        value_text = fmt_value(metric_value, "")
-                    else:
-                        value_text = fmt_value(metric_value)
-
-                    label = compact_metric_label(metric_name)
-
-                    st.caption(label)
-                    st.markdown(f"**{value_text}**")
 
 
 if "page" not in st.session_state:
@@ -134,6 +77,57 @@ if "selected_user_id" not in st.session_state:
 
 if "previous_page" not in st.session_state:
     st.session_state["previous_page"] = "home"
+    
+def create_group_task_summary_df(group_users, group_task_runs):
+    rows = []
+
+    for _, task_row in group_task_runs.iterrows():
+        user_id = task_row.get("user_id")
+        user_match = group_users[group_users["user_id"] == user_id]
+
+        user_name = (
+            user_match.iloc[0].get("user.fullName", "")
+            if not user_match.empty
+            else ""
+        )
+
+        task_type = get_task_type(task_row)
+        task_name = TASK_DISPLAY_NAMES.get(task_type, task_type)
+
+        metrics = get_task_summary_metrics(task_row)
+
+        rows.append(
+            {
+                "user_id": user_id,
+                "name": user_name,
+                "milestone_id": task_row.get("milestone_id"),
+                "session_id": task_row.get("session_id"),
+                "task_type": task_type,
+                "task_name": task_name,
+                "accuracy": metrics.get("Accuracy"),
+                "omission": metrics.get("Omission"),
+                "mean_rt": metrics.get("Mean RT"),
+                "conflict_score": metrics.get("Conflict Score"),
+                "final_score": metrics.get("Final Score"),
+            }
+        )
+
+    df = pd.DataFrame(rows)
+
+    if df.empty:
+        return df
+
+    for col in ["accuracy", "omission", "mean_rt", "conflict_score", "final_score"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    for col in ["accuracy", "omission"]:
+        if col in df.columns:
+            df[col] = df[col].apply(
+                lambda x: x * 100 if pd.notna(x) and abs(x) <= 1 else x
+            )
+
+    return df
 
 
 def check_password():
@@ -182,19 +176,8 @@ def make_user_home_table(df):
     out["Email"] = df["user.email"] if "user.email" in df.columns else ""
     out["User ID"] = df["user_id"] if "user_id" in df.columns else ""
 
-    age_map = {
-        0: "<18",
-        1: ">18",
-        "0": "<18",
-        "1": ">18",
-    }
-
-    gender_map = {
-        1: "Male",
-        2: "Female",
-        "1": "Male",
-        "2": "Female",
-    }
+    age_map = {0: "<18", 1: ">18", "0": "<18", "1": ">18"}
+    gender_map = {1: "Male", 2: "Female", "1": "Male", "2": "Female"}
 
     out["Age"] = (
         df["user.ageGroup"].map(age_map)
@@ -224,22 +207,6 @@ def get_selected_config_users(df_users, selected_config):
 
     return df_users[df_users["user.appConfigId"] == selected_config].copy()
 
-TASK_DISPLAY_NAMES = {
-    "cd": "CD",
-    "gng": "GNG",
-    "msit": "MSIT",
-    "survey_arousal": "Arousal",
-    "survey_self_knowledge": "Self Knowledge",
-}
-
-TASK_ICONS = {
-    "cd": "🧠",
-    "gng": "🎯",
-    "msit": "⚡",
-    "survey_arousal": "😊",
-    "survey_self_knowledge": "📘",
-}
-
 
 def first_existing_value(row, candidates, default=None):
     for col in candidates:
@@ -255,18 +222,23 @@ def fmt_value(value, suffix=""):
     try:
         value = float(value)
         if abs(value) <= 1 and suffix == "%":
-            value = value * 100
+            value *= 100
         return f"{value:.2f}{suffix}"
     except Exception:
         return str(value)
 
 
 def get_task_type(task_row):
-    return (
+    task_type = (
         task_row.get("task.result.run.taskId")
         or task_row.get("task.context.taskId")
         or task_row.get("task_id")
     )
+
+    if isinstance(task_type, str) and "-" in task_type:
+        return task_type.split("-")[0]
+
+    return task_type
 
 
 def get_task_summary_metrics(task_row):
@@ -274,31 +246,91 @@ def get_task_summary_metrics(task_row):
 
     if task_type == "cd":
         return {
-            "Accuracy": first_existing_value(task_row, ["task.result.summary.accuracy", "task.result.summary.cd_accuracy"]),
-            "Omission": first_existing_value(task_row, ["task.result.summary.omission_rate", "task.result.summary.cd_omission_rate"]),
-            "Mean RT": first_existing_value(task_row, ["task.result.summary.mean_rt"]),
+            "Accuracy": first_existing_value(
+                task_row,
+                ["task.result.summary.accuracy", "task.result.summary.cd_accuracy"],
+            ),
+            "Omission": first_existing_value(
+                task_row,
+                [
+                    "task.result.summary.omission_rate",
+                    "task.result.summary.cd_omission_rate",
+                ],
+            ),
+            "Mean RT": first_existing_value(
+                task_row,
+                ["task.result.summary.mean_rt"],
+            ),
         }
 
     if task_type == "gng":
         return {
-            "Accuracy": first_existing_value(task_row, ["task.result.summary.accuracy", "task.result.summary.gng_go_accuracy"]),
-            "Omission": first_existing_value(task_row, ["task.result.summary.omission_rate", "task.result.summary.gng_omission_rate"]),
-            "Mean RT": first_existing_value(task_row, ["task.result.summary.mean_rt", "task.result.summary.gng_mean_go_rt"]),
+            "Accuracy": first_existing_value(
+                task_row,
+                [
+                    "task.result.summary.accuracy",
+                    "task.result.summary.gng_go_accuracy",
+                ],
+            ),
+            "Omission": first_existing_value(
+                task_row,
+                [
+                    "task.result.summary.omission_rate",
+                    "task.result.summary.gng_omission_rate",
+                ],
+            ),
+            "Mean RT": first_existing_value(
+                task_row,
+                [
+                    "task.result.summary.mean_rt",
+                    "task.result.summary.gng_mean_go_rt",
+                ],
+            ),
         }
 
     if task_type == "msit":
         return {
-            "Accuracy": first_existing_value(task_row, ["task.result.summary.d_accuracy", "task.result.summary.cc_prop_correct", "task.result.summary.prop_correct"]),
-            "Conflict Score": first_existing_value(task_row, ["task.result.summary.conflict_score"]),
-            "Mean RT": first_existing_value(task_row, ["task.result.summary.mean_rt", "task.result.summary.cc_mean_rt"]),
+            "Accuracy": first_existing_value(
+                task_row,
+                [
+                    "task.result.summary.d_accuracy",
+                    "task.result.summary.cc_prop_correct",
+                    "task.result.summary.prop_correct",
+                ],
+            ),
+            "Conflict Score": first_existing_value(
+                task_row,
+                ["task.result.summary.conflict_score"],
+            ),
+            "Mean RT": first_existing_value(
+                task_row,
+                [
+                    "task.result.summary.mean_rt",
+                    "task.result.summary.cc_mean_rt",
+                ],
+            ),
         }
 
     if task_type in ["survey_arousal", "survey_self_knowledge"]:
         return {
-            "Final Score": first_existing_value(task_row, ["task.result.summary.final_score"]),
+            "Final Score": first_existing_value(
+                task_row,
+                ["task.result.summary.final_score"],
+            )
         }
 
     return {}
+
+
+def compact_metric_label(name):
+    label_map = {
+        "Accuracy": "Acc",
+        "Omission": "Omis",
+        "Mean RT": "RT",
+        "Conflict Score": "Conflict",
+        "Final Score": "Score",
+    }
+    return label_map.get(name, name)
 
 
 def render_metric_card(label, value, icon="📌"):
@@ -306,32 +338,45 @@ def render_metric_card(label, value, icon="📌"):
         st.markdown(f"**{icon} {label}**")
         st.caption(fmt_value(value))
 
-def render_task_summary_card(task_row):
-    task_type = get_task_type(task_row)
-    display_name = TASK_DISPLAY_NAMES.get(task_type, task_type)
-    icon = TASK_ICONS.get(task_type, "📌")
-    metrics = get_task_summary_metrics(task_row)
 
-    with st.container(border=True):
-        st.markdown(f"**{icon} {display_name}**")
+def render_compact_task_grid(session_tasks):
+    task_order = [
+        "cd",
+        "gng",
+        "msit",
+        "survey_arousal",
+        "survey_self_knowledge",
+    ]
 
-        if not metrics:
-            st.caption("No summary metrics detected.")
-            return
+    task_cols = st.columns(5)
 
-        cols = st.columns(len(metrics))
+    for col, task_type in zip(task_cols, task_order):
+        task_rows = session_tasks[
+            session_tasks.apply(lambda r: get_task_type(r) == task_type, axis=1)
+        ]
 
-        for col, (metric_name, metric_value) in zip(cols, metrics.items()):
-            with col:
-                if metric_name in ["Accuracy", "Omission"]:
-                    value_text = fmt_value(metric_value, "%")
-                elif "RT" in metric_name:
-                    value_text = fmt_value(metric_value, " ms")
-                else:
-                    value_text = fmt_value(metric_value)
+        with col:
+            if task_rows.empty:
+                continue
 
-                st.caption(metric_name)
-                st.markdown(f"**{value_text}**")
+            task_row = task_rows.iloc[0]
+            display_name = TASK_DISPLAY_NAMES.get(task_type, task_type)
+            icon = TASK_ICONS.get(task_type, "📌")
+            metrics = get_task_summary_metrics(task_row)
+
+            with st.container(border=True):
+                st.markdown(f"**{icon} {display_name}**")
+
+                for metric_name, metric_value in metrics.items():
+                    if metric_name in ["Accuracy", "Omission"]:
+                        value_text = fmt_value(metric_value, "%")
+                    elif "RT" in metric_name:
+                        value_text = fmt_value(metric_value, "")
+                    else:
+                        value_text = fmt_value(metric_value)
+
+                    st.caption(compact_metric_label(metric_name))
+                    st.markdown(f"**{value_text}**")
 
 
 def render_accuracy_pie(task_name, accuracy):
@@ -341,14 +386,17 @@ def render_accuracy_pie(task_name, accuracy):
     try:
         acc = float(accuracy)
         if acc <= 1:
-            acc = acc * 100
+            acc *= 100
 
-        err = max(0, 100 - acc)
+        acc = max(0, min(acc, 100))
+        err = 100 - acc
 
-        pie_df = pd.DataFrame({
-            "Outcome": ["Correct", "Error"],
-            "Percent": [acc, err],
-        })
+        pie_df = pd.DataFrame(
+            {
+                "Outcome": ["Correct", "Error"],
+                "Percent": [acc, err],
+            }
+        )
 
         fig = px.pie(
             pie_df,
@@ -369,6 +417,7 @@ def load_data():
     user_rows, milestone_rows, score_rows, session_rows, task_run_rows = (
         fetch_firestore_data()
     )
+
     return rows_to_dataframes(
         user_rows,
         milestone_rows,
@@ -436,199 +485,9 @@ if st.session_state["page"] == "home":
             open_dataset("app_config_default")
             st.rerun()
 
-    st.divider()
-
-    nav1, nav2 = st.columns(2)
-
-    with nav1:
-        st.button("Home", use_container_width=True, disabled=True)
-
-    with nav2:
-        if st.button("Export", use_container_width=True):
-            go_export()
-            st.rerun()
-
     st.stop()
 
 
-# ----------------------------
-# EXPORT PAGE
-# ----------------------------
-if st.session_state["page"] == "export":
-    top1, top2, _ = st.columns([1, 1, 4])
-
-    with top1:
-        if st.button("Home", use_container_width=True):
-            go_home()
-            st.rerun()
-
-    with top2:
-        if st.button("Go Back", use_container_width=True):
-            go_back()
-            st.rerun()
-
-    st.title("Export Data")
-
-    selected_config = st.session_state.get("selected_app_config")
-
-    if selected_config:
-        default_users = get_selected_config_users(df_users, selected_config)
-        selected_config_label = APP_CONFIG_LABELS.get(selected_config, selected_config)
-        st.caption(f"Current dataset: {selected_config_label}")
-    else:
-        default_users = df_users
-        st.caption("Current dataset: All data")
-
-    default_user_options = []
-
-    for _, row in default_users.iterrows():
-        name = row.get("user.fullName", "Unknown Name")
-        user_id = row.get("user_id", "")
-        updated = row.get("user.updatedAt", "")
-
-        try:
-            updated_str = pd.to_datetime(updated).strftime("%d %B, %Y")
-        except Exception:
-            updated_str = ""
-
-        default_user_options.append(
-            {
-                "label": f"{name} | {user_id} | {updated_str}",
-                "user_id": user_id,
-            }
-        )
-
-    all_labels = [u["label"] for u in default_user_options]
-
-    select_action = st.radio(
-        "Selection mode",
-        ["Select All", "Deselect All", "Multiple Selection"],
-        horizontal=True,
-    )
-
-    if select_action == "Select All":
-        selected_labels = all_labels
-    elif select_action == "Deselect All":
-        selected_labels = []
-    else:
-        selected_labels = st.multiselect(
-            "Select users",
-            options=all_labels,
-            default=all_labels,
-        )
-
-    selected_export_user_ids = [
-        u["user_id"] for u in default_user_options if u["label"] in selected_labels
-    ]
-
-    export_level = st.radio(
-        "Export level",
-        ["Subject/User level", "Milestone level", "Session level", "Game wise"],
-        horizontal=True,
-    )
-
-    export_users = df_users[df_users["user_id"].isin(selected_export_user_ids)]
-    export_milestones = df_milestones[
-        df_milestones["user_id"].isin(selected_export_user_ids)
-    ]
-    export_scores = df_scores[df_scores["user_id"].isin(selected_export_user_ids)]
-    export_sessions = df_sessions[
-        df_sessions["user_id"].isin(selected_export_user_ids)
-    ]
-    export_task_runs = df_task_runs[
-        df_task_runs["user_id"].isin(selected_export_user_ids)
-    ]
-    export_task_trials = df_task_trials[
-        df_task_trials["user_id"].isin(selected_export_user_ids)
-    ]
-
-    if export_level == "Milestone level":
-        valid_users = export_milestones["user_id"].unique().tolist()
-        export_users = export_users[export_users["user_id"].isin(valid_users)]
-
-    if export_level == "Session level":
-        valid_users = export_sessions["user_id"].unique().tolist()
-        export_users = export_users[export_users["user_id"].isin(valid_users)]
-
-    if export_level == "Game wise":
-        valid_users = export_task_runs["user_id"].unique().tolist()
-        export_users = export_users[export_users["user_id"].isin(valid_users)]
-
-    c1, c2, c3, c4, c5, c6 = st.columns(6)
-
-    c1.metric("Users", len(export_users))
-    c2.metric("Milestones", len(export_milestones))
-    c3.metric("Scores", len(export_scores))
-    c4.metric("Sessions", len(export_sessions))
-    c5.metric("Task Runs", len(export_task_runs))
-    c6.metric("Trial Rows", len(export_task_trials))
-
-    json_file = create_json_bytes(
-        export_users,
-        export_milestones,
-        export_scores,
-        export_sessions,
-        export_task_runs,
-        export_level,
-    )
-
-    excel_file = create_excel_bytes(
-        export_users,
-        export_milestones,
-        export_scores,
-        export_sessions,
-        export_task_runs,
-        export_task_trials,
-    )
-
-    col_a, col_b = st.columns(2)
-
-    with col_a:
-        st.download_button(
-            label="Download JSON",
-            data=json_file,
-            file_name="firestore_export.json",
-            mime="application/json",
-            use_container_width=True,
-        )
-
-    with col_b:
-        st.download_button(
-            label="Download Excel Workbook",
-            data=excel_file,
-            file_name="firestore_export.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True,
-        )
-
-    st.download_button(
-        label="Download Task Trials CSV",
-        data=export_task_trials.to_csv(index=False).encode("utf-8"),
-        file_name="task_trials.csv",
-        mime="text/csv",
-        use_container_width=True,
-    )
-    
-    summary_rows_file = create_summary_rows_export(
-        export_users,
-        export_sessions,
-        export_task_runs,
-    )
-
-    st.download_button(
-        label="Download Summary Rows Diagnostic Export",
-        data=summary_rows_file,
-        file_name="summary_rows_diagnostic.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True,
-    )
-
-    st.stop()
-
-
-# ----------------------------
-# SUBJECT DASHBOARD PAGE
-# ----------------------------
 # ----------------------------
 # SUBJECT DASHBOARD PAGE
 # ----------------------------
@@ -667,7 +526,6 @@ if st.session_state["page"] == "subject_view":
     st.caption(f"{subject_email} | User ID: {selected_user_id}")
 
     m1, m2, m3 = st.columns(3)
-
     m1.metric("Milestones", len(subject_milestones))
     m2.metric("Sessions", len(subject_sessions))
     m3.metric("Tasks", len(subject_task_runs))
@@ -678,14 +536,13 @@ if st.session_state["page"] == "subject_view":
         ["Overview", "Milestones", "Sessions Tree", "Raw Data"]
     )
 
-    # ----------------------------
-    # OVERVIEW
-    # ----------------------------
     with subject_tab1:
         st.subheader("Participant Overview")
 
         st.dataframe(
-            make_user_home_table(subject_users).drop(columns=["_sort_time"], errors="ignore"),
+            make_user_home_table(subject_users).drop(
+                columns=["_sort_time"], errors="ignore"
+            ),
             use_container_width=True,
             hide_index=True,
         )
@@ -701,17 +558,54 @@ if st.session_state["page"] == "subject_view":
                 with st.container(border=True):
                     st.markdown(f"## Milestone: {milestone_id}")
 
-                    task_cols = st.columns(5)
-
                     raw_score_mapping = [
-                        ("cd", "CD", "🧠", ["score.flags.task_raw_scores.cd", "score.taskSubscores.cd"]),
-                        ("gng", "GNG", "🎯", ["score.flags.task_raw_scores.gng", "score.taskSubscores.gng"]),
-                        ("msit", "MSIT", "⚡", ["score.flags.task_raw_scores.msit", "score.taskSubscores.msit"]),
-                        ("survey_arousal", "Arousal", "😊", ["score.flags.task_raw_scores.survey_arousal", "score.taskSubscores.survey_arousal"]),
-                        ("survey_self_knowledge", "Self Knowledge", "📘", ["score.flags.task_raw_scores.survey_self_knowledge", "score.taskSubscores.survey_self_knowledge"]),
+                        (
+                            "CD",
+                            "🧠",
+                            [
+                                "score.flags.task_raw_scores.cd",
+                                "score.taskSubscores.cd",
+                            ],
+                        ),
+                        (
+                            "GNG",
+                            "🎯",
+                            [
+                                "score.flags.task_raw_scores.gng",
+                                "score.taskSubscores.gng",
+                            ],
+                        ),
+                        (
+                            "MSIT",
+                            "⚡",
+                            [
+                                "score.flags.task_raw_scores.msit",
+                                "score.taskSubscores.msit",
+                            ],
+                        ),
+                        (
+                            "Arousal",
+                            "😊",
+                            [
+                                "score.flags.task_raw_scores.survey_arousal",
+                                "score.taskSubscores.survey_arousal",
+                            ],
+                        ),
+                        (
+                            "Self Knowledge",
+                            "📘",
+                            [
+                                "score.flags.task_raw_scores.survey_self_knowledge",
+                                "score.taskSubscores.survey_self_knowledge",
+                            ],
+                        ),
                     ]
 
-                    for col, (_, display_name, icon, candidates) in zip(task_cols, raw_score_mapping):
+                    task_cols = st.columns(5)
+
+                    for col, (display_name, icon, candidates) in zip(
+                        task_cols, raw_score_mapping
+                    ):
                         with col:
                             value = first_existing_value(score_row, candidates)
                             render_metric_card(display_name, value, icon)
@@ -726,6 +620,7 @@ if st.session_state["page"] == "subject_view":
                     )
 
                     st.markdown("### Scaled Score")
+
                     if scaled_score is not None and pd.notna(scaled_score):
                         try:
                             scaled_float = float(scaled_score)
@@ -744,26 +639,31 @@ if st.session_state["page"] == "subject_view":
 
                     pie_cols = st.columns(3)
 
-                    for task_type, task_label, icon in [
-                        ("cd", "CD", "🧠"),
-                        ("gng", "GNG", "🎯"),
-                        ("msit", "MSIT", "⚡"),
-                    ]:
+                    for idx, (task_type, task_label, icon) in enumerate(
+                        [
+                            ("cd", "CD", "🧠"),
+                            ("gng", "GNG", "🎯"),
+                            ("msit", "MSIT", "⚡"),
+                        ]
+                    ):
                         task_rows = milestone_tasks[
-                            milestone_tasks.apply(lambda r: get_task_type(r) == task_type, axis=1)
+                            milestone_tasks.apply(
+                                lambda r: get_task_type(r) == task_type,
+                                axis=1,
+                            )
                         ]
 
-                        if not task_rows.empty:
-                            task_row = task_rows.iloc[0]
-                            metrics = get_task_summary_metrics(task_row)
-                            accuracy = metrics.get("Accuracy")
+                        with pie_cols[idx]:
+                            if not task_rows.empty:
+                                task_row = task_rows.iloc[0]
+                                metrics = get_task_summary_metrics(task_row)
+                                render_accuracy_pie(
+                                    f"{icon} {task_label}",
+                                    metrics.get("Accuracy"),
+                                )
+                            else:
+                                st.info(f"{task_label}: no data.")
 
-                            with pie_cols[["cd", "gng", "msit"].index(task_type)]:
-                                render_accuracy_pie(f"{icon} {task_label}", accuracy)
-
-    # ----------------------------
-    # MILESTONES
-    # ----------------------------
     with subject_tab2:
         st.subheader("Milestone-Level View")
 
@@ -777,14 +677,51 @@ if st.session_state["page"] == "subject_view":
                     task_cols = st.columns(5)
 
                     raw_score_mapping = [
-                        ("CD", "🧠", ["score.flags.task_raw_scores.cd", "score.taskSubscores.cd"]),
-                        ("GNG", "🎯", ["score.flags.task_raw_scores.gng", "score.taskSubscores.gng"]),
-                        ("MSIT", "⚡", ["score.flags.task_raw_scores.msit", "score.taskSubscores.msit"]),
-                        ("Arousal", "😊", ["score.flags.task_raw_scores.survey_arousal", "score.taskSubscores.survey_arousal"]),
-                        ("Self Knowledge", "📘", ["score.flags.task_raw_scores.survey_self_knowledge", "score.taskSubscores.survey_self_knowledge"]),
+                        (
+                            "CD",
+                            "🧠",
+                            [
+                                "score.flags.task_raw_scores.cd",
+                                "score.taskSubscores.cd",
+                            ],
+                        ),
+                        (
+                            "GNG",
+                            "🎯",
+                            [
+                                "score.flags.task_raw_scores.gng",
+                                "score.taskSubscores.gng",
+                            ],
+                        ),
+                        (
+                            "MSIT",
+                            "⚡",
+                            [
+                                "score.flags.task_raw_scores.msit",
+                                "score.taskSubscores.msit",
+                            ],
+                        ),
+                        (
+                            "Arousal",
+                            "😊",
+                            [
+                                "score.flags.task_raw_scores.survey_arousal",
+                                "score.taskSubscores.survey_arousal",
+                            ],
+                        ),
+                        (
+                            "Self Knowledge",
+                            "📘",
+                            [
+                                "score.flags.task_raw_scores.survey_self_knowledge",
+                                "score.taskSubscores.survey_self_knowledge",
+                            ],
+                        ),
                     ]
 
-                    for col, (display_name, icon, candidates) in zip(task_cols, raw_score_mapping):
+                    for col, (display_name, icon, candidates) in zip(
+                        task_cols, raw_score_mapping
+                    ):
                         with col:
                             value = first_existing_value(score_row, candidates)
                             render_metric_card(display_name, value, icon)
@@ -799,6 +736,7 @@ if st.session_state["page"] == "subject_view":
                     )
 
                     st.markdown("#### Scaled Score")
+
                     if scaled_score is not None and pd.notna(scaled_score):
                         try:
                             scaled_float = float(scaled_score)
@@ -809,9 +747,6 @@ if st.session_state["page"] == "subject_view":
                     else:
                         st.info("Scaled score not available.")
 
-    # ----------------------------
-    # SESSIONS TREE
-    # ----------------------------
     with subject_tab3:
         st.subheader("Sessions Tree")
 
@@ -847,19 +782,92 @@ if st.session_state["page"] == "subject_view":
                                 if session_tasks.empty:
                                     st.info("No task runs found.")
                                 else:
-                                    task_types_order = [
-                                        "cd",
-                                        "gng",
-                                        "msit",
-                                        "survey_arousal",
-                                        "survey_self_knowledge",
-                                    ]
-
                                     render_compact_task_grid(session_tasks)
 
-    # ----------------------------
-    # RAW DATA
-    # ----------------------------
+                                    st.markdown("#### Trial Visualisation")
+
+                                    available_trial_tasks = [
+                                        task
+                                        for task in ["cd", "gng", "msit"]
+                                        if not session_tasks[
+                                            session_tasks.apply(lambda r: get_task_type(r) == task, axis=1)
+                                        ].empty
+                                    ]
+
+                                    if not available_trial_tasks:
+                                        st.info("No CD/GNG/MSIT trial data found for this session.")
+                                    else:
+                                        selected_trial_task = st.selectbox(
+                                            "Select task for trial visualisation",
+                                            options=available_trial_tasks,
+                                            format_func=lambda x: TASK_DISPLAY_NAMES.get(x, x),
+                                            key=f"trial_viz_{milestone_id}_{session_id}",
+                                        )
+
+                                        task_row = session_tasks[
+                                            session_tasks.apply(
+                                                lambda r: get_task_type(r) == selected_trial_task,
+                                                axis=1,
+                                            )
+                                        ].iloc[0]
+
+                                        trial_rows = []
+
+                                        for trial in parse_trials(task_row.get("task.result.trials")):
+                                            outcome = trial.get("outcome", {}) or {}
+                                            timings = trial.get("timings", {}) or {}
+
+                                            trial_rows.append(
+                                                {
+                                                    "Index": trial.get("index"),
+                                                    "Phase": trial.get("blockStage"),
+                                                    "Correct": 1 if outcome.get("wasCorrect") is True else 0,
+                                                    "Reaction time": timings.get("rt_ms"),
+                                                    "Timeout": outcome.get("wasTimeout"),
+                                                }
+                                            )
+
+                                        trial_df = pd.DataFrame(trial_rows)
+
+                                        if trial_df.empty:
+                                            st.info("No trial-level data found for this task.")
+                                        else:
+                                            fig_rt = px.histogram(
+                                                trial_df.dropna(subset=["Reaction time"]),
+                                                x="Reaction time",
+                                                color="Phase",
+                                                nbins=20,
+                                                title="Reaction Time Distribution",
+                                            )
+                                            st.plotly_chart(fig_rt, use_container_width=True)
+
+                                            fig_correct = px.bar(
+                                                trial_df,
+                                                x="Index",
+                                                y="Correct",
+                                                color="Phase",
+                                                title="Correct / Incorrect by Trial",
+                                            )
+                                            st.plotly_chart(fig_correct, use_container_width=True)
+
+                                            correct_percent = trial_df["Correct"].mean() * 100
+
+                                            pie_df = pd.DataFrame(
+                                                {
+                                                    "Outcome": ["Correct", "Incorrect"],
+                                                    "Percent": [correct_percent, 100 - correct_percent],
+                                                }
+                                            )
+
+                                            fig_pie = px.pie(
+                                                pie_df,
+                                                names="Outcome",
+                                                values="Percent",
+                                                hole=0.5,
+                                                title="Correct Response Percentage",
+                                            )
+                                            st.plotly_chart(fig_pie, use_container_width=True)
+
     with subject_tab4:
         raw_tab1, raw_tab2, raw_tab3, raw_tab4, raw_tab5 = st.tabs(
             ["Scores", "Milestones", "Sessions", "Task Runs", "Trial Outcomes"]
@@ -882,6 +890,7 @@ if st.session_state["page"] == "subject_view":
 
     st.stop()
 
+
 # ----------------------------
 # DATASET VIEW PAGE
 # ----------------------------
@@ -894,22 +903,25 @@ if st.session_state["page"] == "dataset_view":
 
     selected_config_label = APP_CONFIG_LABELS.get(selected_config, selected_config)
 
-    top1, top2, _ = st.columns([1, 1, 4])
+    top1, _ = st.columns([1, 5])
 
     with top1:
         if st.button("Home", use_container_width=True):
             go_home()
             st.rerun()
 
-    with top2:
-        if st.button("Export", use_container_width=True):
-            go_export()
-            st.rerun()
-
     st.divider()
     st.subheader(f"{selected_config_label} Users")
 
     config_users = get_selected_config_users(df_users, selected_config)
+    config_user_ids = config_users["user_id"].dropna().tolist()
+
+    export_users = df_users[df_users["user_id"].isin(config_user_ids)]
+    export_milestones = df_milestones[df_milestones["user_id"].isin(config_user_ids)]
+    export_scores = df_scores[df_scores["user_id"].isin(config_user_ids)]
+    export_sessions = df_sessions[df_sessions["user_id"].isin(config_user_ids)]
+    export_task_runs = df_task_runs[df_task_runs["user_id"].isin(config_user_ids)]
+    export_task_trials = df_task_trials[df_task_trials["user_id"].isin(config_user_ids)]
 
     sort_col1, sort_col2 = st.columns([3, 1])
 
@@ -960,17 +972,29 @@ if st.session_state["page"] == "dataset_view":
     group_config_options = st.multiselect(
         "Select dataset groups",
         options=list(APP_CONFIG_LABELS.keys()),
-        default=list(APP_CONFIG_LABELS.keys()),
+        default=[selected_config],
         format_func=lambda x: APP_CONFIG_LABELS.get(x, x),
     )
 
-    group_users = (
+    group_users_base = (
         df_users[df_users["user.appConfigId"].isin(group_config_options)]
         if "user.appConfigId" in df_users.columns
         else df_users.iloc[0:0]
     )
 
-    group_user_ids = group_users["user_id"].tolist()
+    subject_options = make_user_home_table(group_users_base)
+
+    selected_group_user_ids = st.multiselect(
+        "Select subjects for group analysis",
+        options=subject_options["User ID"].dropna().tolist(),
+        default=subject_options["User ID"].dropna().tolist(),
+    )
+
+    group_users = group_users_base[
+        group_users_base["user_id"].isin(selected_group_user_ids)
+    ]
+
+    group_user_ids = group_users["user_id"].dropna().tolist()
 
     group_milestones = df_milestones[df_milestones["user_id"].isin(group_user_ids)]
     group_scores = df_scores[df_scores["user_id"].isin(group_user_ids)]
@@ -978,49 +1002,245 @@ if st.session_state["page"] == "dataset_view":
     group_task_runs = df_task_runs[df_task_runs["user_id"].isin(group_user_ids)]
     group_task_trials = df_task_trials[df_task_trials["user_id"].isin(group_user_ids)]
 
-    g1, g2, g3, g4, g5, g6 = st.columns(6)
-
-    g1.metric("Users", len(group_users))
-    g2.metric("Milestones", len(group_milestones))
-    g3.metric("Scores", len(group_scores))
-    g4.metric("Sessions", len(group_sessions))
-    g5.metric("Task Runs", len(group_task_runs))
-    g6.metric("Trial Rows", len(group_task_trials))
-
-    group_tab1, group_tab2, group_tab3, group_tab4 = st.tabs(
-        ["Users", "Scores", "Sessions", "Trial Outcomes"]
+    group_task_summary = create_group_task_summary_df(
+        group_users,
+        group_task_runs,
     )
 
-    with group_tab1:
-        group_users_display = make_user_home_table(group_users).drop(
-            columns=["_sort_time"],
-            errors="ignore",
+    g1, g2, g3, g4, g5 = st.columns(5)
+
+    g1.metric("Selected Users", len(group_users))
+    g2.metric("Completed Milestones", group_milestones["milestone_id"].nunique() if "milestone_id" in group_milestones.columns else 0)
+    g3.metric("Completed Sessions", group_sessions["session_id"].nunique() if "session_id" in group_sessions.columns else 0)
+    g4.metric("Task Runs", len(group_task_runs))
+    g5.metric("Trial Rows", len(group_task_trials))
+
+    analysis_tab1, analysis_tab2, analysis_tab3, analysis_tab4 = st.tabs(
+        [
+            "Task Score Summary",
+            "Accuracy Distribution",
+            "Session-wise Analysis",
+            "Raw Group Data",
+        ]
+    )
+
+    with analysis_tab1:
+        st.markdown("### Task-wise Statistical Summary")
+
+        if group_task_summary.empty:
+            st.info("No task summary data found.")
+        else:
+            stats_cols = [
+                col for col in [
+                    "accuracy",
+                    "omission",
+                    "mean_rt",
+                    "conflict_score",
+                    "final_score",
+                ]
+                if col in group_task_summary.columns
+            ]
+
+            stats_df = (
+                group_task_summary
+                .groupby("task_name")[stats_cols]
+                .agg(["count", "mean", "std", "min", "max"])
+                .reset_index()
+            )
+
+            stats_df.columns = [
+                "_".join(col).strip("_") if isinstance(col, tuple) else col
+                for col in stats_df.columns
+            ]
+
+            st.dataframe(stats_df, use_container_width=True, height=350)
+
+            plot_metric = st.selectbox(
+                "Select metric for distribution plot",
+                options=stats_cols,
+                format_func=lambda x: {
+                    "accuracy": "Accuracy",
+                    "omission": "Omission",
+                    "mean_rt": "Mean RT",
+                    "conflict_score": "Conflict Score",
+                    "final_score": "Final Score",
+                }.get(x, x),
+            )
+
+            fig_box = px.box(
+                group_task_summary.dropna(subset=[plot_metric]),
+                x="task_name",
+                y=plot_metric,
+                points="all",
+                color="task_name",
+                title=f"{plot_metric.replace('_', ' ').title()} Distribution by Task",
+            )
+
+            st.plotly_chart(fig_box, use_container_width=True)
+
+    with analysis_tab2:
+        st.markdown("### Accuracy Distribution Across Users and Sessions")
+
+        if group_task_summary.empty or "accuracy" not in group_task_summary.columns:
+            st.info("No accuracy data found.")
+        else:
+            accuracy_df = group_task_summary.dropna(subset=["accuracy"])
+
+            if accuracy_df.empty:
+                st.info("No valid accuracy values found.")
+            else:
+                fig_hist = px.histogram(
+                    accuracy_df,
+                    x="accuracy",
+                    color="task_name",
+                    nbins=20,
+                    marginal="box",
+                    title="Accuracy Distribution Across All Users and Sessions",
+                )
+
+                st.plotly_chart(fig_hist, use_container_width=True)
+
+                fig_user = px.box(
+                    accuracy_df,
+                    x="task_name",
+                    y="accuracy",
+                    color="task_name",
+                    points="all",
+                    hover_data=["name", "user_id", "milestone_id", "session_id"],
+                    title="Task Accuracy Spread Across Subjects",
+                )
+
+                st.plotly_chart(fig_user, use_container_width=True)
+
+    with analysis_tab3:
+        st.markdown("### Session-wise Task Analysis")
+
+        if group_task_summary.empty:
+            st.info("No session-level task data found.")
+        else:
+            session_stats = (
+                group_task_summary
+                .groupby(["milestone_id", "session_id", "task_name"], dropna=False)
+                .agg(
+                    subjects=("user_id", "nunique"),
+                    accuracy_mean=("accuracy", "mean"),
+                    accuracy_std=("accuracy", "std"),
+                    omission_mean=("omission", "mean"),
+                    mean_rt_mean=("mean_rt", "mean"),
+                    mean_rt_std=("mean_rt", "std"),
+                    final_score_mean=("final_score", "mean"),
+                    final_score_std=("final_score", "std"),
+                )
+                .reset_index()
+            )
+
+            st.dataframe(session_stats, use_container_width=True, height=350)
+
+            if "accuracy_mean" in session_stats.columns:
+                fig_session_acc = px.bar(
+                    session_stats.dropna(subset=["accuracy_mean"]),
+                    x="session_id",
+                    y="accuracy_mean",
+                    color="task_name",
+                    facet_col="milestone_id",
+                    barmode="group",
+                    title="Mean Accuracy by Session and Task",
+                )
+
+                st.plotly_chart(fig_session_acc, use_container_width=True)
+
+            if "mean_rt_mean" in session_stats.columns:
+                fig_session_rt = px.bar(
+                    session_stats.dropna(subset=["mean_rt_mean"]),
+                    x="session_id",
+                    y="mean_rt_mean",
+                    color="task_name",
+                    facet_col="milestone_id",
+                    barmode="group",
+                    title="Mean Reaction Time by Session and Task",
+                )
+
+                st.plotly_chart(fig_session_rt, use_container_width=True)
+
+            if "final_score_mean" in session_stats.columns:
+                fig_session_score = px.bar(
+                    session_stats.dropna(subset=["final_score_mean"]),
+                    x="session_id",
+                    y="final_score_mean",
+                    color="task_name",
+                    facet_col="milestone_id",
+                    barmode="group",
+                    title="Survey Final Score by Session",
+                )
+
+                st.plotly_chart(fig_session_score, use_container_width=True)
+
+    with analysis_tab4:
+        raw_group_tab1, raw_group_tab2, raw_group_tab3, raw_group_tab4, raw_group_tab5 = st.tabs(
+            ["Users", "Scores", "Sessions", "Task Summary", "Trial Outcomes"]
         )
 
-        group_table_event = st.dataframe(
-            group_users_display,
+        with raw_group_tab1:
+            st.dataframe(
+                make_user_home_table(group_users).drop(columns=["_sort_time"], errors="ignore"),
+                use_container_width=True,
+                height=400,
+                hide_index=True,
+            )
+
+        with raw_group_tab2:
+            st.dataframe(group_scores, use_container_width=True, height=400)
+
+        with raw_group_tab3:
+            st.dataframe(group_sessions, use_container_width=True, height=400)
+
+        with raw_group_tab4:
+            st.dataframe(group_task_summary, use_container_width=True, height=400)
+
+        with raw_group_tab5:
+            st.dataframe(group_task_trials, use_container_width=True, height=400)
+
+    st.divider()
+    st.subheader(f"{selected_config_label} Export")
+
+    export_tab1, export_tab2, export_tab3 = st.tabs(
+        [
+            "Milestone Based Analysis",
+            "Session Based Analysis",
+            "Task Level Export",
+        ]
+    )
+
+    with export_tab1:
+        milestone_file = create_summary_rows_export(
+            export_users,
+            export_sessions,
+            export_task_runs,
+        )
+
+        st.download_button(
+            label="Download Milestone Based Analysis",
+            data=milestone_file,
+            file_name=f"{selected_config_label.lower().replace(' ', '_')}_milestone_based_analysis.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True,
-            height=400,
-            hide_index=True,
-            on_select="rerun",
-            selection_mode="single-row",
         )
 
-        group_selected_rows = group_table_event.selection.rows
+    with export_tab2:
+        st.info("Session Based Analysis export will be added next.")
 
-        if group_selected_rows:
-            selected_row_index = group_selected_rows[0]
-            selected_user_id = group_users_display.iloc[selected_row_index]["User ID"]
-            open_subject(selected_user_id)
-            st.rerun()
+    with export_tab3:
+        task_file = create_task_wise_trials_export(
+            export_users,
+            export_task_runs,
+        )
 
-    with group_tab2:
-        st.dataframe(group_scores, use_container_width=True, height=400)
-
-    with group_tab3:
-        st.dataframe(group_sessions, use_container_width=True, height=400)
-
-    with group_tab4:
-        st.dataframe(group_task_trials, use_container_width=True, height=400)
+        st.download_button(
+            label="Download Task Level Export",
+            data=task_file,
+            file_name=f"{selected_config_label.lower().replace(' ', '_')}_task_level_export.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+        )
 
     st.stop()
