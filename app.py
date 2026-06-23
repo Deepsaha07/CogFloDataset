@@ -4,6 +4,7 @@ import plotly.express as px
 
 from services.firestore_service import fetch_firestore_data
 from utils.processing import rows_to_dataframes
+import utils.export_utils as export_utils
 from utils.export_utils import (
     create_summary_rows_export,
     create_task_wise_trials_export,
@@ -1212,7 +1213,7 @@ if st.session_state["page"] == "dataset_view":
     )
 
     with export_tab1:
-        milestone_file = create_summary_rows_export(
+        milestone_file = export_utils.create_summary_rows_export(
             export_users,
             export_sessions,
             export_task_runs,
@@ -1230,7 +1231,7 @@ if st.session_state["page"] == "dataset_view":
         st.info("Session Based Analysis export will be added next.")
 
     with export_tab3:
-        task_file = create_task_wise_trials_export(
+        task_file = export_utils.create_task_wise_trials_export(
             export_users,
             export_task_runs,
         )
