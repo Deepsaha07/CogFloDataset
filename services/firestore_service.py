@@ -14,6 +14,12 @@ SESSIONS_COLLECTION = "sessions"
 
 TASK_RUNS_COLLECTION = "task_runs"
 
+IMU_CHANNELS_COLLECTION = "imu_channels"
+
+INTERACTION_CHANNELS_COLLECTION = "interaction_channels"
+
+CHUNKS_COLLECTION = "chunks"
+
 
 
 
@@ -51,6 +57,42 @@ def safe_doc_to_dict(doc_snapshot):
     return flatten_dict(doc_snapshot.to_dict() or {})
 
 
+def fetch_channel_samples(task_doc, collection_name, base_row):
+    """Return one row per sample stored in a task channel chunk."""
+    sample_rows = []
+
+    for channel_doc in task_doc.reference.collection(collection_name).stream():
+        for chunk_doc in channel_doc.reference.collection(CHUNKS_COLLECTION).stream():
+            chunk_data = chunk_doc.to_dict() or {}
+            samples = chunk_data.get("samples", [])
+
+            if not isinstance(samples, list):
+                continue
+
+            chunk_metadata = {
+                key: value
+                for key, value in chunk_data.items()
+                if key != "samples" and not isinstance(value, (dict, list))
+            }
+
+            for sample_index, sample in enumerate(samples):
+                if not isinstance(sample, dict):
+                    continue
+
+                row = {
+                    **base_row,
+                    "channel_id": channel_doc.id,
+                    "chunk_id": chunk_doc.id,
+                    "sample_index": sample_index,
+                    **chunk_metadata,
+                    **flatten_dict(sample),
+                }
+                row.setdefault("channel", channel_doc.id)
+                sample_rows.append(row)
+
+    return sample_rows
+
+
 def fetch_firestore_data():
     db = init_firestore()
 
@@ -59,6 +101,8 @@ def fetch_firestore_data():
     score_rows = []
     session_rows = []
     task_run_rows = []
+    imu_sample_rows = []
+    interaction_sample_rows = []
 
     user_docs = list(db.collection(ROOT_COLLECTION).stream())
 
@@ -130,21 +174,10 @@ def fetch_firestore_data():
         #print("SESSION PATH:", session_doc.reference.path)
         #print("SESSION SUBCOLLECTIONS:", [c.id for c in session_doc.reference.collections()])
                 
-                print("SESSION PATH:", session_doc.reference.path)
-                print("SESSION SUBCOLLECTIONS:", [c.id for c in session_doc.reference.collections()])
-
                 task_runs_ref = session_doc.reference.collection("task_runs")
                 task_docs = list(task_runs_ref.stream())
 
-                print(
-                    f"FOUND {len(task_docs)} TASK RUNS UNDER:",
-                    f"{session_doc.reference.path}/task_runs"
-                )
-
                 for task_doc in task_docs:
-                    print("TASK DOC ID:", task_doc.id)
-                    print("TASK DATA:", task_doc.to_dict())
-
                     task_id = task_doc.id
                     task_data = safe_doc_to_dict(task_doc)
 
@@ -160,4 +193,34 @@ def fetch_firestore_data():
 
                     task_run_rows.append(task_row)
 
-    return user_rows, milestone_rows, score_rows, session_rows, task_run_rows
+                    channel_base_row = {
+                        "user_id": user_id,
+                        "milestone_id": milestone_id,
+                        "session_id": session_id,
+                        "task_id": task_id,
+                    }
+
+                    imu_sample_rows.extend(
+                        fetch_channel_samples(
+                            task_doc,
+                            IMU_CHANNELS_COLLECTION,
+                            channel_base_row,
+                        )
+                    )
+                    interaction_sample_rows.extend(
+                        fetch_channel_samples(
+                            task_doc,
+                            INTERACTION_CHANNELS_COLLECTION,
+                            channel_base_row,
+                        )
+                    )
+
+    return (
+        user_rows,
+        milestone_rows,
+        score_rows,
+        session_rows,
+        task_run_rows,
+        imu_sample_rows,
+        interaction_sample_rows,
+    )

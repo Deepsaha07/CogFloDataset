@@ -413,19 +413,155 @@ def render_accuracy_pie(task_name, accuracy):
         pass
 
 
+def render_imu_data(imu_samples):
+    st.subheader("IMU Data")
+
+    if imu_samples.empty:
+        st.info("No IMU samples found for this subject.")
+        return
+
+    filter1, filter2 = st.columns(2)
+    task_ids = imu_samples["task_id"].dropna().unique().tolist()
+    channels = imu_samples["channel"].dropna().unique().tolist()
+
+    with filter1:
+        selected_tasks = st.multiselect(
+            "Task runs",
+            task_ids,
+            default=task_ids,
+            key="imu_task_filter",
+        )
+    with filter2:
+        selected_channels = st.multiselect(
+            "Channels",
+            channels,
+            default=channels,
+            key="imu_channel_filter",
+        )
+
+    filtered = imu_samples[
+        imu_samples["task_id"].isin(selected_tasks)
+        & imu_samples["channel"].isin(selected_channels)
+    ].copy()
+
+    sensor_specs = [
+        ("Magnetometer", "magnetometer"),
+        ("Gyroscope", "gyroscope"),
+        ("Accelerometer", "accelerometer"),
+    ]
+    sensor_tabs = st.tabs([label for label, _ in sensor_specs])
+
+    for tab, (label, sensor_name) in zip(sensor_tabs, sensor_specs):
+        with tab:
+            sensor_values = filtered["sensor"].astype(str).str.lower().replace(
+                {"accelrometer": "accelerometer", "accelorometer": "accelerometer"}
+            )
+            sensor_data = filtered[sensor_values == sensor_name].copy()
+
+            if sensor_data.empty:
+                st.info(f"No {label.lower()} samples found for these filters.")
+                continue
+
+            axis_columns = [col for col in ["x", "y", "z"] if col in sensor_data]
+            x_axis = next(
+                (
+                    col
+                    for col in ["elapsedMicros", "sequence", "sample_index"]
+                    if col in sensor_data
+                ),
+                None,
+            )
+
+            for col in axis_columns + ([x_axis] if x_axis else []):
+                sensor_data[col] = pd.to_numeric(sensor_data[col], errors="coerce")
+
+            if axis_columns and x_axis:
+                plot_data = sensor_data.melt(
+                    id_vars=[x_axis, "channel"],
+                    value_vars=axis_columns,
+                    var_name="Axis",
+                    value_name="Reading",
+                ).dropna(subset=[x_axis, "Reading"])
+                fig = px.line(
+                    plot_data,
+                    x=x_axis,
+                    y="Reading",
+                    color="Axis",
+                    line_dash="channel",
+                    title=f"{label} readings",
+                )
+                st.plotly_chart(fig, use_container_width=True)
+
+            st.dataframe(sensor_data, use_container_width=True, height=350)
+
+
+def render_interaction_data(interaction_samples):
+    st.subheader("Interaction Data — Taps")
+
+    if interaction_samples.empty:
+        st.info("No tap samples found for this subject.")
+        return
+
+    filter1, filter2 = st.columns(2)
+    task_ids = interaction_samples["task_id"].dropna().unique().tolist()
+    channel_column = (
+        "channel_id" if "channel_id" in interaction_samples else "channel"
+    )
+    channels = interaction_samples[channel_column].dropna().unique().tolist()
+
+    with filter1:
+        selected_tasks = st.multiselect(
+            "Task runs",
+            task_ids,
+            default=task_ids,
+            key="interaction_task_filter",
+        )
+    with filter2:
+        selected_channels = st.multiselect(
+            "Channels",
+            channels,
+            default=channels,
+            key="interaction_channel_filter",
+        )
+
+    filtered = interaction_samples[
+        interaction_samples["task_id"].isin(selected_tasks)
+        & interaction_samples[channel_column].isin(selected_channels)
+    ].copy()
+
+    m1, m2 = st.columns(2)
+    m1.metric("Tap samples", len(filtered))
+    excessive_count = (
+        filtered["excessive"].eq(True).sum() if "excessive" in filtered else 0
+    )
+    m2.metric("Excessive taps", int(excessive_count))
+
+    if {"x", "y"}.issubset(filtered.columns):
+        filtered["x"] = pd.to_numeric(filtered["x"], errors="coerce")
+        filtered["y"] = pd.to_numeric(filtered["y"], errors="coerce")
+        fig = px.scatter(
+            filtered.dropna(subset=["x", "y"]),
+            x="x",
+            y="y",
+            color="channel" if "channel" in filtered else channel_column,
+            hover_data=[
+                col
+                for col in ["task_id", "sequence", "tapCountInWindow", "capturedAt"]
+                if col in filtered
+            ],
+            title="Tap locations",
+        )
+        fig.update_yaxes(autorange="reversed", scaleanchor="x", scaleratio=1)
+        st.plotly_chart(fig, use_container_width=True)
+
+    st.dataframe(filtered, use_container_width=True, height=400)
+
+
 @st.cache_data(show_spinner=False)
 def load_data():
-    user_rows, milestone_rows, score_rows, session_rows, task_run_rows = (
-        fetch_firestore_data()
-    )
+    firestore_rows = fetch_firestore_data()
 
-    return rows_to_dataframes(
-        user_rows,
-        milestone_rows,
-        score_rows,
-        session_rows,
-        task_run_rows,
-    )
+    return rows_to_dataframes(*firestore_rows)
 
 
 with st.sidebar:
@@ -447,6 +583,8 @@ try:
             df_sessions,
             df_task_runs,
             df_task_trials,
+            df_imu_samples,
+            df_interaction_samples,
         ) = load_data()
 except Exception as e:
     st.error(f"Failed to load Firestore data: {e}")
@@ -461,6 +599,8 @@ with st.sidebar:
     st.write(f"Sessions: {len(df_sessions)}")
     st.write(f"Tasks: {len(df_task_runs)}")
     st.write(f"Trial Rows: {len(df_task_trials)}")
+    st.write(f"IMU Samples: {len(df_imu_samples)}")
+    st.write(f"Tap Samples: {len(df_interaction_samples)}")
 
 
 # ----------------------------
@@ -501,6 +641,10 @@ if st.session_state["page"] == "subject_view":
     subject_sessions = df_sessions[df_sessions["user_id"] == selected_user_id]
     subject_task_runs = df_task_runs[df_task_runs["user_id"] == selected_user_id]
     subject_task_trials = df_task_trials[df_task_trials["user_id"] == selected_user_id]
+    subject_imu_samples = df_imu_samples[df_imu_samples["user_id"] == selected_user_id]
+    subject_interaction_samples = df_interaction_samples[
+        df_interaction_samples["user_id"] == selected_user_id
+    ]
 
     top1, top2, _ = st.columns([1, 1, 4])
 
@@ -533,8 +677,15 @@ if st.session_state["page"] == "subject_view":
 
     st.divider()
 
-    subject_tab1, subject_tab2, subject_tab3, subject_tab4 = st.tabs(
-        ["Overview", "Milestones", "Sessions Tree", "Raw Data"]
+    subject_tab1, subject_tab2, subject_tab3, subject_tab4, subject_tab5, subject_tab6 = st.tabs(
+        [
+            "Overview",
+            "Milestones",
+            "Sessions Tree",
+            "IMU Data",
+            "Interactions",
+            "Raw Data",
+        ]
     )
 
     with subject_tab1:
@@ -870,8 +1021,22 @@ if st.session_state["page"] == "subject_view":
                                             st.plotly_chart(fig_pie, use_container_width=True)
 
     with subject_tab4:
-        raw_tab1, raw_tab2, raw_tab3, raw_tab4, raw_tab5 = st.tabs(
-            ["Scores", "Milestones", "Sessions", "Task Runs", "Trial Outcomes"]
+        render_imu_data(subject_imu_samples)
+
+    with subject_tab5:
+        render_interaction_data(subject_interaction_samples)
+
+    with subject_tab6:
+        raw_tab1, raw_tab2, raw_tab3, raw_tab4, raw_tab5, raw_tab6, raw_tab7 = st.tabs(
+            [
+                "Scores",
+                "Milestones",
+                "Sessions",
+                "Task Runs",
+                "Trial Outcomes",
+                "IMU Samples",
+                "Tap Samples",
+            ]
         )
 
         with raw_tab1:
@@ -888,6 +1053,12 @@ if st.session_state["page"] == "subject_view":
 
         with raw_tab5:
             st.dataframe(subject_task_trials, use_container_width=True, height=400)
+
+        with raw_tab6:
+            st.dataframe(subject_imu_samples, use_container_width=True, height=400)
+
+        with raw_tab7:
+            st.dataframe(subject_interaction_samples, use_container_width=True, height=400)
 
     st.stop()
 
@@ -923,6 +1094,10 @@ if st.session_state["page"] == "dataset_view":
     export_sessions = df_sessions[df_sessions["user_id"].isin(config_user_ids)]
     export_task_runs = df_task_runs[df_task_runs["user_id"].isin(config_user_ids)]
     export_task_trials = df_task_trials[df_task_trials["user_id"].isin(config_user_ids)]
+    export_imu_samples = df_imu_samples[df_imu_samples["user_id"].isin(config_user_ids)]
+    export_interaction_samples = df_interaction_samples[
+        df_interaction_samples["user_id"].isin(config_user_ids)
+    ]
 
     sort_col1, sort_col2 = st.columns([3, 1])
 
@@ -1204,8 +1379,10 @@ if st.session_state["page"] == "dataset_view":
     st.divider()
     st.subheader(f"{selected_config_label} Export")
 
-    export_tab1, export_tab2, export_tab3 = st.tabs(
+    export_tab1, export_tab2, export_tab3, export_tab4, export_tab5 = st.tabs(
         [
+            "Structured Data",
+            "IMU Data",
             "Milestone Based Analysis",
             "Session Based Analysis",
             "Task Level Export",
@@ -1213,6 +1390,42 @@ if st.session_state["page"] == "dataset_view":
     )
 
     with export_tab1:
+        structured_file = export_utils.create_structured_data_export(
+            export_users,
+            export_milestones,
+            export_scores,
+            export_sessions,
+            export_task_runs,
+            export_task_trials,
+            export_interaction_samples,
+        )
+
+        st.caption(
+            "Includes participant, milestone, score, session, task, trial, and tap interaction data. IMU data is excluded."
+        )
+        st.download_button(
+            label="Download Structured Dataset",
+            data=structured_file,
+            file_name=f"{selected_config_label.lower().replace(' ', '_')}_structured_data.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+        )
+
+    with export_tab2:
+        imu_file = export_utils.create_imu_export(export_users, export_imu_samples)
+
+        st.caption(
+            "IMU-only workbook with separate magnetometer, gyroscope, and accelerometer sheets."
+        )
+        st.download_button(
+            label="Download IMU Data",
+            data=imu_file,
+            file_name=f"{selected_config_label.lower().replace(' ', '_')}_imu_data.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+        )
+
+    with export_tab3:
         milestone_file = export_utils.create_summary_rows_export(
             export_users,
             export_sessions,
@@ -1227,10 +1440,10 @@ if st.session_state["page"] == "dataset_view":
             use_container_width=True,
         )
 
-    with export_tab2:
+    with export_tab4:
         st.info("Session Based Analysis export will be added next.")
 
-    with export_tab3:
+    with export_tab5:
         task_file = export_utils.create_task_wise_trials_export(
             export_users,
             export_task_runs,

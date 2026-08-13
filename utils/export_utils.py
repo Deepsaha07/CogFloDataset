@@ -15,12 +15,177 @@ TASK_NAME_MAP = {
     "survey_self_knowledge": "Self Knowledge",
 }
 
+IDENTIFIER_COLUMNS = [
+    "user_id",
+    "participant_name",
+    "participant_email",
+    "milestone_id",
+    "session_id",
+    "task_id",
+    "channel_id",
+    "channel",
+    "chunk_id",
+    "sample_index",
+]
+
 
 def safe_sheet_name(name):
     invalid = ["\\", "/", "*", "?", ":", "[", "]"]
     for ch in invalid:
         name = name.replace(ch, "_")
     return str(name)[:31]
+
+
+def add_participant_details(df, df_users):
+    """Add human-readable participant fields without losing stable IDs."""
+    result = df.copy()
+    if result.empty or "user_id" not in result.columns:
+        return result
+
+    user_columns = ["user_id"]
+    rename_map = {}
+    if "user.fullName" in df_users.columns:
+        user_columns.append("user.fullName")
+        rename_map["user.fullName"] = "participant_name"
+    if "user.email" in df_users.columns:
+        user_columns.append("user.email")
+        rename_map["user.email"] = "participant_email"
+
+    participant_lookup = (
+        df_users[user_columns].drop_duplicates("user_id").rename(columns=rename_map)
+    )
+    return result.merge(participant_lookup, on="user_id", how="left")
+
+
+def order_export_columns(df, preferred_columns=None):
+    preferred_columns = preferred_columns or IDENTIFIER_COLUMNS
+    first = [column for column in preferred_columns if column in df.columns]
+    remaining = [column for column in df.columns if column not in first]
+    return df[first + remaining]
+
+
+def write_structured_sheet(writer, df, sheet_name):
+    """Write a filterable Excel table-like sheet with readable dimensions."""
+    safe_df = make_excel_safe(order_export_columns(df))
+    safe_df.to_excel(writer, sheet_name=sheet_name, index=False)
+
+    worksheet = writer.sheets[sheet_name]
+    worksheet.freeze_panes = "A2"
+    if safe_df.shape[1] > 0:
+        worksheet.auto_filter.ref = worksheet.dimensions
+
+    for index, column in enumerate(safe_df.columns, start=1):
+        values = safe_df[column].dropna().astype(str)
+        content_width = values.str.len().max() if not values.empty else 0
+        width = min(max(len(str(column)), int(content_width)) + 2, 45)
+        worksheet.column_dimensions[worksheet.cell(1, index).column_letter].width = width
+
+
+def create_structured_data_export(
+    df_users,
+    df_milestones,
+    df_scores,
+    df_sessions,
+    df_task_runs,
+    df_task_trials,
+    df_interaction_samples,
+):
+    """Create the main export. IMU is deliberately excluded."""
+    output = BytesIO()
+    interactions = add_participant_details(df_interaction_samples, df_users)
+
+    overview = pd.DataFrame(
+        [
+            {"section": "Users", "rows": len(df_users), "sheet": "users"},
+            {"section": "Milestones", "rows": len(df_milestones), "sheet": "milestones"},
+            {"section": "Scores", "rows": len(df_scores), "sheet": "scores"},
+            {"section": "Sessions", "rows": len(df_sessions), "sheet": "sessions"},
+            {"section": "Task runs", "rows": len(df_task_runs), "sheet": "task_runs"},
+            {"section": "Trial outcomes", "rows": len(df_task_trials), "sheet": "task_trials"},
+            {"section": "Tap interactions", "rows": len(interactions), "sheet": "tap_interactions"},
+        ]
+    )
+
+    sheets = [
+        ("overview", overview),
+        ("users", df_users),
+        ("milestones", df_milestones),
+        ("scores", df_scores),
+        ("sessions", df_sessions),
+        ("task_runs", df_task_runs),
+        ("task_trials", df_task_trials),
+        ("tap_interactions", interactions),
+    ]
+
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        for sheet_name, dataframe in sheets:
+            write_structured_sheet(writer, dataframe, sheet_name)
+
+    output.seek(0)
+    return output
+
+
+def create_imu_export(df_users, df_imu_samples):
+    """Create an IMU-only workbook split into one sheet per sensor."""
+    output = BytesIO()
+    imu = add_participant_details(df_imu_samples, df_users)
+
+    if "sensor" in imu.columns:
+        normalized_sensor = imu["sensor"].astype(str).str.lower().replace(
+            {"accelrometer": "accelerometer", "accelorometer": "accelerometer"}
+        )
+    else:
+        normalized_sensor = pd.Series("", index=imu.index)
+
+    sensor_specs = [
+        ("magnetometer", "magnetometer"),
+        ("gyroscope", "gyroscope"),
+        ("accelerometer", "accelerometer"),
+    ]
+    sensor_frames = {
+        sheet_name: imu[normalized_sensor == sensor_name].copy()
+        for sheet_name, sensor_name in sensor_specs
+    }
+
+    overview_rows = [
+        {
+            "sensor": sensor_name,
+            "samples": len(sensor_frames[sheet_name]),
+            "participants": (
+                sensor_frames[sheet_name]["user_id"].nunique()
+                if "user_id" in sensor_frames[sheet_name]
+                else 0
+            ),
+            "sheet": sheet_name,
+        }
+        for sheet_name, sensor_name in sensor_specs
+    ]
+
+    sort_columns = [
+        column
+        for column in [
+            "participant_name",
+            "user_id",
+            "milestone_id",
+            "session_id",
+            "task_id",
+            "channel",
+            "sequence",
+            "sample_index",
+        ]
+        if column in imu.columns
+    ]
+
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        write_structured_sheet(writer, pd.DataFrame(overview_rows), "overview")
+        for sheet_name, _ in sensor_specs:
+            sensor_df = sensor_frames[sheet_name]
+            if sort_columns and not sensor_df.empty:
+                sensor_df = sensor_df.sort_values(sort_columns, na_position="last")
+            write_structured_sheet(writer, sensor_df, sheet_name)
+
+    output.seek(0)
+    return output
 
 
 def parse_trials(value):

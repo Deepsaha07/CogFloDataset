@@ -168,13 +168,39 @@ def clean_scores_dataframe(df_scores):
     return df_scores
 
 
-def rows_to_dataframes(user_rows, milestone_rows, score_rows, session_rows, task_run_rows):
+def rows_to_dataframes(
+    user_rows,
+    milestone_rows,
+    score_rows,
+    session_rows,
+    task_run_rows,
+    imu_sample_rows=None,
+    interaction_sample_rows=None,
+):
     df_users = pd.DataFrame(user_rows)
     df_milestones = pd.DataFrame(milestone_rows)
     df_scores = pd.DataFrame(score_rows)
     df_sessions = pd.DataFrame(session_rows)
 
     df_task_runs = pd.DataFrame(task_run_rows)
+    sample_id_columns = [
+        "user_id",
+        "milestone_id",
+        "session_id",
+        "task_id",
+        "channel_id",
+        "channel",
+        "chunk_id",
+        "sample_index",
+    ]
+    df_imu_samples = pd.DataFrame(imu_sample_rows or [])
+    df_interaction_samples = pd.DataFrame(interaction_sample_rows or [])
+
+    if df_imu_samples.empty:
+        df_imu_samples = pd.DataFrame(columns=sample_id_columns + ["sensor"])
+
+    if df_interaction_samples.empty:
+        df_interaction_samples = pd.DataFrame(columns=sample_id_columns)
 
     if df_task_runs.empty:
         df_task_runs = pd.DataFrame(
@@ -185,4 +211,13 @@ def rows_to_dataframes(user_rows, milestone_rows, score_rows, session_rows, task
 
     df_task_trials = create_task_trials_dataframe(df_task_runs)
 
-    return df_users, df_milestones, df_scores, df_sessions, df_task_runs, df_task_trials
+    return (
+        df_users,
+        df_milestones,
+        df_scores,
+        df_sessions,
+        df_task_runs,
+        df_task_trials,
+        df_imu_samples,
+        df_interaction_samples,
+    )
