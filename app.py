@@ -42,6 +42,10 @@ TASK_ICONS = {
     "survey_self_knowledge": "📘",
 }
 
+# Increment when the Firestore loading shape/path changes so deployed Streamlit
+# instances cannot reuse data cached by an older loader implementation.
+DATA_CACHE_VERSION = "telemetry-channels-v2"
+
 
 def go_home():
     st.session_state["page"] = "home"
@@ -558,7 +562,7 @@ def render_interaction_data(interaction_samples):
 
 
 @st.cache_data(show_spinner=False)
-def load_data():
+def load_data(cache_version):
     firestore_rows = fetch_firestore_data()
 
     return rows_to_dataframes(*firestore_rows)
@@ -585,7 +589,7 @@ try:
             df_task_trials,
             df_imu_samples,
             df_interaction_samples,
-        ) = load_data()
+        ) = load_data(DATA_CACHE_VERSION)
 except Exception as e:
     st.error(f"Failed to load Firestore data: {e}")
     st.stop()
