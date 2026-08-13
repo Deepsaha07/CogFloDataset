@@ -14,6 +14,8 @@ SESSIONS_COLLECTION = "sessions"
 
 TASK_RUNS_COLLECTION = "task_runs"
 
+TELEMETRY_COLLECTION = "telemetry"
+
 IMU_CHANNELS_COLLECTION = "imu_channels"
 
 INTERACTION_CHANNELS_COLLECTION = "interaction_channels"
@@ -57,22 +59,28 @@ def safe_doc_to_dict(doc_snapshot):
     return flatten_dict(doc_snapshot.to_dict() or {})
 
 
-def fetch_channel_samples(task_doc, collection_name, base_row):
+def fetch_channel_samples(parent_doc, collection_name, base_row, data_fields=("samples",)):
     """Return one row per sample stored in a task channel chunk."""
     sample_rows = []
 
-    for channel_doc in task_doc.reference.collection(collection_name).stream():
+    for channel_doc in parent_doc.reference.collection(collection_name).stream():
         for chunk_doc in channel_doc.reference.collection(CHUNKS_COLLECTION).stream():
             chunk_data = chunk_doc.to_dict() or {}
-            samples = chunk_data.get("samples", [])
+            samples = next(
+                (
+                    chunk_data[field]
+                    for field in data_fields
+                    if isinstance(chunk_data.get(field), list)
+                ),
+                [],
+            )
 
-            if not isinstance(samples, list):
-                continue
+            data_field_names = set(data_fields)
 
             chunk_metadata = {
                 key: value
                 for key, value in chunk_data.items()
-                if key != "samples" and not isinstance(value, (dict, list))
+                if key not in data_field_names and not isinstance(value, (dict, list))
             }
 
             for sample_index, sample in enumerate(samples):
@@ -212,6 +220,37 @@ def fetch_firestore_data():
                             task_doc,
                             INTERACTION_CHANNELS_COLLECTION,
                             channel_base_row,
+                            data_fields=("events", "samples"),
+                        )
+                    )
+
+                telemetry_docs = list(
+                    session_doc.reference.collection(TELEMETRY_COLLECTION).stream()
+                )
+
+                for telemetry_doc in telemetry_docs:
+                    telemetry_base_row = {
+                        "user_id": user_id,
+                        "milestone_id": milestone_id,
+                        "session_id": session_id,
+                        "task_id": telemetry_doc.id,
+                        "telemetry_id": telemetry_doc.id,
+                        "source_path": telemetry_doc.reference.path,
+                    }
+
+                    imu_sample_rows.extend(
+                        fetch_channel_samples(
+                            telemetry_doc,
+                            IMU_CHANNELS_COLLECTION,
+                            telemetry_base_row,
+                        )
+                    )
+                    interaction_sample_rows.extend(
+                        fetch_channel_samples(
+                            telemetry_doc,
+                            INTERACTION_CHANNELS_COLLECTION,
+                            telemetry_base_row,
+                            data_fields=("events", "samples"),
                         )
                     )
 

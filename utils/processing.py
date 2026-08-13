@@ -188,6 +188,8 @@ def rows_to_dataframes(
         "milestone_id",
         "session_id",
         "task_id",
+        "telemetry_id",
+        "source_path",
         "channel_id",
         "channel",
         "chunk_id",
